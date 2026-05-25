@@ -653,7 +653,7 @@ export function startMcpServer(rootDir: string): void {
               result: {
                 protocolVersion: '2024-11-05',
                 capabilities: { tools: { listChanged: false } },
-                serverInfo: { name: 'cgraph', version: '0.1.0' },
+                serverInfo: { name: 'cgraph', version: '0.3.0' },
               },
             });
             break;
