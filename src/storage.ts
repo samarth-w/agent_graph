@@ -311,6 +311,17 @@ export class GraphDB {
     this.run('DELETE FROM edges');
   }
 
+  /** Clear edges where source or target belongs to any of the given file IDs. */
+  clearEdgesForFiles(fileIds: number[]): void {
+    if (fileIds.length === 0) return;
+    const placeholders = fileIds.map(() => '?').join(',');
+    this.run(
+      `DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file_id IN (${placeholders}))
+       OR target_id IN (SELECT id FROM nodes WHERE file_id IN (${placeholders}))`,
+      [...fileIds, ...fileIds],
+    );
+  }
+
   getEdgesFrom(nodeId: number, kind?: string): EdgeRecord[] {
     if (kind) {
       return this.all(

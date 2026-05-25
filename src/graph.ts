@@ -717,3 +717,146 @@ export function getProjectStats(
     complexity_distribution: dist,
   };
 }
+
+// ─── refactoring suggestions ────────────────────────────────────
+export interface Suggestion {
+  type: 'extract' | 'inline' | 'move' | 'dead' | 'split';
+  symbol: string;
+  file: string;
+  line: number;
+  reason: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface SuggestResult {
+  suggestions: Suggestion[];
+  total: number;
+}
+
+export function suggestRefactorings(
+  db: GraphDB,
+  opts: { symbol?: string; file?: string; limit?: number } = {},
+): SuggestResult {
+  const limit = opts.limit ?? 30;
+  const suggestions: Suggestion[] = [];
+  let allNodes = db.getAllNodes();
+
+  // Optionally scope to a symbol or file
+  if (opts.symbol) {
+    const matches = db.findNodesByName(opts.symbol);
+    if (matches.length > 0) allNodes = matches;
+    else return { suggestions: [], total: 0 };
+  }
+  if (opts.file) {
+    const file = db.getFile(opts.file);
+    if (file) allNodes = db.getNodesForFile(file.id);
+    else return { suggestions: [], total: 0 };
+  }
+
+  for (const node of allNodes) {
+    if (suggestions.length >= limit * 3) break; // over-collect for dedup
+
+    const f = db.getFileById(node.file_id);
+    const fp = f?.path ?? '';
+    const fanIn = db.getEdgesTo(node.id, 'calls').length;
+    const fanOut = db.getEdgesFrom(node.id, 'calls').length;
+    const bodyLines = (node.end_line ?? node.start_line) - node.start_line + 1;
+
+    // 1. Extract method: long functions with high fan-out
+    if (bodyLines > 50 && fanOut >= 5) {
+      suggestions.push({
+        type: 'extract',
+        symbol: node.name,
+        file: fp,
+        line: node.start_line,
+        reason: `${bodyLines} lines, ${fanOut} outgoing calls — consider splitting into smaller functions`,
+        priority: bodyLines > 100 ? 'high' : 'medium',
+      });
+    }
+
+    // 2. Inline candidate: single caller, small body, just delegates
+    if (fanIn === 1 && fanOut <= 2 && bodyLines <= 10 && node.kind === 'function') {
+      suggestions.push({
+        type: 'inline',
+        symbol: node.name,
+        file: fp,
+        line: node.start_line,
+        reason: `Only 1 caller, ${bodyLines} lines — may be inlined`,
+        priority: 'low',
+      });
+    }
+
+    // 3. Move candidate: symbol used more by other files than its own
+    if (fanIn >= 2) {
+      const callers = db.getEdgesTo(node.id, 'calls');
+      const sameFile = callers.filter(e => {
+        const src = db.getNode(e.source_id);
+        return src && src.file_id === node.file_id;
+      }).length;
+      const otherFile = callers.length - sameFile;
+      // Find which external file uses it most
+      if (otherFile > sameFile && otherFile >= 2) {
+        const extCallerFiles = new Map<string, number>();
+        for (const e of callers) {
+          const src = db.getNode(e.source_id);
+          if (src && src.file_id !== node.file_id) {
+            const sf = db.getFileById(src.file_id);
+            if (sf) extCallerFiles.set(sf.path, (extCallerFiles.get(sf.path) || 0) + 1);
+          }
+        }
+        const topFile = [...extCallerFiles.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (topFile) {
+          suggestions.push({
+            type: 'move',
+            symbol: node.name,
+            file: fp,
+            line: node.start_line,
+            reason: `${otherFile}/${callers.length} callers are external; most from ${topFile[0]} (${topFile[1]} calls)`,
+            priority: otherFile >= 4 ? 'high' : 'medium',
+          });
+        }
+      }
+    }
+
+    // 4. Dead code
+    if (fanIn === 0 && fanOut === 0 && !node.exported) {
+      suggestions.push({
+        type: 'dead',
+        symbol: node.name,
+        file: fp,
+        line: node.start_line,
+        reason: 'No callers, no callees, not exported — safe to remove',
+        priority: 'medium',
+      });
+    }
+
+    // 5. God function / split candidate: very high fan-out
+    if (fanOut >= 10) {
+      suggestions.push({
+        type: 'split',
+        symbol: node.name,
+        file: fp,
+        line: node.start_line,
+        reason: `${fanOut} outgoing calls — orchestrator function, consider splitting responsibilities`,
+        priority: fanOut >= 15 ? 'high' : 'medium',
+      });
+    }
+  }
+
+  // Deduplicate by symbol+type, sort by priority
+  const seen = new Set<string>();
+  const deduped = suggestions.filter(s => {
+    const key = `${s.type}:${s.symbol}:${s.file}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const priorityOrder = { high: 0, medium: 1, low: 2 };
+  deduped.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
+
+  return {
+    suggestions: deduped.slice(0, limit),
+    total: deduped.length,
+  };
+}

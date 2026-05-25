@@ -13,7 +13,7 @@ import os from 'os';
 import fg from 'fast-glob';
 import { GraphDB } from './storage';
 import { parseFile } from './parser';
-import { DEFAULT_CONFIG, detectLanguage, getDbPath } from './config';
+import { DEFAULT_CONFIG, detectLanguage, getDbPath, loadConfig } from './config';
 import { extractRoutes } from './frameworks';
 import { synthesizeEdges } from './synthesizer';
 import { buildIgnoreFilter } from './gitignore';
@@ -33,7 +33,7 @@ export async function indexProject(
   opts: { force?: boolean; config?: Partial<GraphConfig> } = {},
 ): Promise<IndexResult> {
   const t0 = Date.now();
-  const cfg = { ...DEFAULT_CONFIG, ...opts.config };
+  const cfg = { ...loadConfig(rootDir), ...opts.config };
   const dbPath = getDbPath(rootDir);
   const db = await GraphDB.open(dbPath);
 
@@ -159,10 +159,23 @@ export async function indexProject(
       }
     });
 
-    // 4. Resolve edges (full rebuild from raw_refs)
+    // 4. Resolve edges
+    // Incremental: if few files changed, only re-resolve edges involving those files
+    // Full rebuild: if many files changed or forced
+    const changedFileIds = [...parseResults.keys()];
+    const incrementalThreshold = Math.max(10, Math.floor(filePaths.length * 0.2));
+
     db.transaction(() => {
-      db.clearAllEdges();
-      resolveEdges(db, rootDir);
+      if (changedFileIds.length > 0 && changedFileIds.length <= incrementalThreshold && !opts.force) {
+        // Incremental: clear only edges touching changed files, then full re-resolve
+        // (raw_refs are already up to date; re-resolve is safe because lookup maps are global)
+        db.clearEdgesForFiles(changedFileIds);
+        resolveEdges(db, rootDir);
+      } else {
+        // Full rebuild
+        db.clearAllEdges();
+        resolveEdges(db, rootDir);
+      }
     });
 
     // 5. Classify roles
@@ -410,19 +423,72 @@ function resolveModulePath(
 // ─── role classification ────────────────────────────────────────
 function classifyRoles(db: GraphDB): void {
   const nodes = db.getAllNodes();
-  for (const node of nodes) {
-    const incoming = db.getEdgesTo(node.id, 'calls');
-    const outgoing = db.getEdgesFrom(node.id, 'calls');
-    const isExported = node.exported === 1;
+  const testRe = /\.(test|spec|e2e)\.(ts|tsx|js|jsx|py)$|__tests?__\//i;
 
+  // Pre-compute file paths for test detection
+  const filePathCache = new Map<number, string>();
+  const getFilePath = (fileId: number): string => {
+    if (!filePathCache.has(fileId)) {
+      const f = db.getFileById(fileId);
+      filePathCache.set(fileId, f?.path ?? '');
+    }
+    return filePathCache.get(fileId)!;
+  };
+
+  // First pass: compute metrics for all nodes
+  const metrics = new Map<number, { incoming: number; outgoing: number; isExported: boolean; isTest: boolean }>();
+  for (const node of nodes) {
+    const incoming = db.getEdgesTo(node.id, 'calls').length;
+    const outgoing = db.getEdgesFrom(node.id, 'calls').length;
+    const fp = getFilePath(node.file_id);
+    metrics.set(node.id, {
+      incoming,
+      outgoing,
+      isExported: node.exported === 1,
+      isTest: testRe.test(fp),
+    });
+  }
+
+  // Second pass: detect bridges (nodes whose removal disconnects subgraphs)
+  // Approximate: a node is a bridge if it connects two groups that don't connect otherwise
+  const bridgeCandidates = new Set<number>();
+  for (const node of nodes) {
+    const m = metrics.get(node.id)!;
+    if (m.incoming >= 2 && m.outgoing >= 2) {
+      // Check if callers and callees share no other connections
+      const callerIds = db.getEdgesTo(node.id, 'calls').map(e => e.source_id);
+      const calleeIds = db.getEdgesFrom(node.id, 'calls').map(e => e.target_id);
+      const callerSet = new Set(callerIds);
+      // If callees have no direct edges to/from any caller, this is a bridge
+      let directConnections = 0;
+      for (const cid of calleeIds) {
+        const calleeCallers = db.getEdgesTo(cid, 'calls');
+        for (const e of calleeCallers) {
+          if (callerSet.has(e.source_id)) directConnections++;
+        }
+      }
+      if (directConnections === 0) bridgeCandidates.add(node.id);
+    }
+  }
+
+  // Classify
+  for (const node of nodes) {
+    const m = metrics.get(node.id)!;
     let role: string;
-    if (incoming.length === 0 && !isExported && outgoing.length === 0) {
+
+    if (m.isTest) {
+      role = 'test';
+    } else if (m.incoming === 0 && !m.isExported && m.outgoing === 0) {
       role = 'dead';
-    } else if (incoming.length === 0 && isExported) {
+    } else if (m.incoming === 0 && m.isExported) {
       role = 'entry';
-    } else if (incoming.length >= 3) {
+    } else if (m.incoming >= 3 && m.outgoing >= 3) {
+      role = 'hub';       // high fan-in AND fan-out
+    } else if (bridgeCandidates.has(node.id)) {
+      role = 'bridge';    // connects otherwise-separate clusters
+    } else if (m.incoming >= 3) {
       role = 'core';
-    } else if (outgoing.length > 0 && incoming.length === 0) {
+    } else if (m.outgoing > 0 && m.incoming === 0) {
       role = 'leaf';
     } else {
       role = 'utility';

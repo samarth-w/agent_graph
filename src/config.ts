@@ -1,5 +1,8 @@
+import fs from 'fs';
 import path from 'path';
 import type { GraphConfig } from './types';
+
+export const CONFIG_FILE = '.cgraph.json';
 
 export const DEFAULT_CONFIG: GraphConfig = {
   maxDepth: 3,
@@ -74,4 +77,26 @@ export function isJSTS(lang: string): boolean {
 /** Rough token estimate: ~4 chars per token */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+/**
+ * Load project-level config from .cgraph.json in rootDir,
+ * merged over DEFAULT_CONFIG. Unknown keys are ignored.
+ */
+export function loadConfig(rootDir: string): GraphConfig {
+  const configPath = path.join(rootDir, CONFIG_FILE);
+  if (!fs.existsSync(configPath)) return { ...DEFAULT_CONFIG };
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const merged: GraphConfig = { ...DEFAULT_CONFIG };
+    if (typeof raw.maxDepth === 'number') merged.maxDepth = raw.maxDepth;
+    if (typeof raw.maxNodes === 'number') merged.maxNodes = raw.maxNodes;
+    if (typeof raw.maxSnippets === 'number') merged.maxSnippets = raw.maxSnippets;
+    if (typeof raw.maxSnippetLines === 'number') merged.maxSnippetLines = raw.maxSnippetLines;
+    if (Array.isArray(raw.ignorePaths)) merged.ignorePaths = raw.ignorePaths.filter((p: unknown) => typeof p === 'string');
+    if (Array.isArray(raw.extensions)) merged.extensions = raw.extensions.filter((e: unknown) => typeof e === 'string');
+    return merged;
+  } catch {
+    return { ...DEFAULT_CONFIG };
+  }
 }

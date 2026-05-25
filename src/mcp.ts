@@ -11,7 +11,7 @@ import path from 'path';
 import readline from 'readline';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats } from './graph';
+import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings } from './graph';
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DB_DIR } from './config';
@@ -229,6 +229,18 @@ const TOOLS: McpToolDef[] = [
       },
     },
   },
+  {
+    name: 'cgraph_suggest',
+    description: 'Suggest refactorings: extract method (long functions), inline (single-caller wrappers), move (symbols used more by other files), dead code removal, split (god functions). Scopes to a symbol or file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbol: { type: 'string', description: 'Scope suggestions to this symbol' },
+        file: { type: 'string', description: 'Scope suggestions to this file path' },
+        limit: { type: 'number', description: 'Max suggestions (default: 30)', default: 30 },
+      },
+    },
+  },
 ];
 
 // ─── Tool handler ──────────────────────────────────────────────
@@ -239,13 +251,18 @@ class ToolHandler {
   private watcher: FileWatcher | null = null;
   private dirty = false; // set true by watcher, cleared after db swap
 
+  /** Progress callback set by MCP server for notifications. */
+  onProgress: ((token: string | number, message: string, percentage?: number) => void) | null = null;
+
   constructor(private rootDir: string) {}
 
   private async getDb(): Promise<GraphDB> {
     if (!this.db) {
       const dbPath = getDbPath(this.rootDir);
       if (!fs.existsSync(dbPath)) {
+        this.onProgress?.('index', 'Building initial index...', 0);
         await indexProject(this.rootDir);
+        this.onProgress?.('index', 'Index complete', 100);
       }
       this.db = await GraphDB.open(dbPath);
 
@@ -271,12 +288,14 @@ class ToolHandler {
     if (this.dirty && !this.syncing) {
       this.dirty = false;
       this.syncing = true;
+      this.onProgress?.('sync', 'Reloading index after file changes...');
       try {
         const fresh = await GraphDB.open(getDbPath(this.rootDir));
         const old = this.db;
         this.db = fresh;
         old?.close();
         this.cache.clear();
+        this.onProgress?.('sync', 'Index reloaded');
       } catch { /* keep old db */ }
       this.syncing = false;
     }
@@ -288,7 +307,7 @@ class ToolHandler {
   private static CACHEABLE = new Set([
     'cgraph_search', 'cgraph_callers', 'cgraph_callees', 'cgraph_impact',
     'cgraph_node', 'cgraph_trace', 'cgraph_files', 'cgraph_status', 'cgraph_export',
-    'cgraph_deadcode', 'cgraph_cycles', 'cgraph_stats',
+    'cgraph_deadcode', 'cgraph_cycles', 'cgraph_stats', 'cgraph_suggest',
   ]);
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
@@ -319,6 +338,7 @@ class ToolHandler {
         case 'cgraph_deadcode': result = await this.handleDeadCode(args); break;
         case 'cgraph_cycles': result = await this.handleCycles(args); break;
         case 'cgraph_stats': result = await this.handleStats(args); break;
+        case 'cgraph_suggest': result = await this.handleSuggest(args); break;
         default:
           return this.errorResult(`Unknown tool: ${toolName}`);
       }
@@ -693,6 +713,26 @@ class ToolHandler {
     return this.textResult(lines.join('\n'));
   }
 
+  private async handleSuggest(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const result = suggestRefactorings(db, {
+      symbol: args.symbol as string | undefined,
+      file: args.file as string | undefined,
+      limit: args.limit != null ? clamp(Number(args.limit), 1, 100) : undefined,
+    });
+    if (result.total === 0) return this.textResult('No refactoring suggestions found.');
+    const lines = [`## Refactoring Suggestions (${result.total})`, ''];
+    const icons: Record<string, string> = { extract: 'Extract', inline: 'Inline', move: 'Move', dead: 'Remove', split: 'Split' };
+    for (const s of result.suggestions) {
+      const tag = `[${s.priority.toUpperCase()}]`;
+      lines.push(`### ${icons[s.type] || s.type}: ${s.symbol} ${tag}`);
+      lines.push(`${s.file}:${s.line}`);
+      lines.push(s.reason);
+      lines.push('');
+    }
+    return this.textResult(lines.join('\n'));
+  }
+
   private formatNodeList(nodes: { name: string; qualified_name: string; kind: string; file_path: string; start_line: number }[], title: string): string {
     const lines = [`## ${title} (${nodes.length})`, ''];
     for (const n of nodes) {
@@ -746,6 +786,23 @@ export function startMcpServer(rootDir: string): void {
     const json = JSON.stringify(response);
     process.stdout.write(json + '\n');
   }
+
+  function sendNotification(method: string, params: any): void {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+  }
+
+  /** Send a progress notification to the client. */
+  function sendProgress(token: string | number, message: string, percentage?: number): void {
+    sendNotification('notifications/progress', {
+      progressToken: token,
+      progress: percentage ?? -1,
+      total: percentage !== undefined ? 100 : undefined,
+      message,
+    });
+  }
+
+  // Expose progress to handler for indexing notifications
+  handler.onProgress = sendProgress;
 
   function maybeExit(): void {
     if (stdinClosed && pending === 0) {

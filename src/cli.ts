@@ -10,7 +10,7 @@ import path from 'path';
 import fs from 'fs';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats } from './graph';
+import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings } from './graph';
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DEFAULT_CONFIG } from './config';
@@ -645,6 +645,33 @@ program
     const db = await openDb(root);
     try {
       const result = getProjectStats(db, {
+        limit: parseInt(opts.limit, 10),
+      });
+      if (opts.json) {
+        out(result);
+      } else {
+        out(result, true);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph suggest ──────────────────────────────────────────────
+program
+  .command('suggest')
+  .description('Suggest refactorings: extract, inline, move, dead code, split')
+  .option('--symbol <name>', 'scope to a specific symbol')
+  .option('--file <path>', 'scope to a specific file')
+  .option('--limit <n>', 'max suggestions', '30')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const result = suggestRefactorings(db, {
+        symbol: opts.symbol,
+        file: opts.file,
         limit: parseInt(opts.limit, 10),
       });
       if (opts.json) {
