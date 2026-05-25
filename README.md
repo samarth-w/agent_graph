@@ -38,8 +38,9 @@ This will:
 2. Fetch cgraph source
 3. Build it
 4. Add `cgraph` to your PATH
+5. Configure VS Code MCP globally (works in **all** workspaces)
 
-**That's it.** No npm, no git, no Node.js knowledge needed.
+**Install and forget.** Open any project in VS Code, ask Copilot — cgraph auto-indexes on first query.
 
 ### Option B: Install from source (if you have Node.js)
 
@@ -65,27 +66,21 @@ npm run build
 npm link
 ```
 
-### Index Your Project
-
-```bash
-# From your project directory
-cgraph index
-
-# Check what was indexed
-cgraph status
-```
-
 ### Use with GitHub Copilot (VS Code)
 
-Create `.vscode/mcp.json` in the project you want to analyze:
+The installer automatically configures cgraph in your **VS Code user settings**, so it works in every workspace — no per-project setup needed.
+
+If you installed from source, add this to your VS Code `settings.json` (Ctrl+Shift+P → "Open User Settings (JSON)"):
 
 ```json
 {
-  "servers": {
-    "cgraph": {
-      "command": "node",
-      "args": ["<path-to-cgraph>/bin/cgraph.js", "serve", "--mcp"],
-      "cwd": "${workspaceFolder}"
+  "mcp": {
+    "servers": {
+      "cgraph": {
+        "command": "node",
+        "args": ["<path-to-cgraph>/bin/cgraph.js", "serve", "--mcp"],
+        "cwd": "${workspaceFolder}"
+      }
     }
   }
 }
@@ -96,7 +91,7 @@ Create `.vscode/mcp.json` in the project you want to analyze:
 > "command": "C:\\Program Files\\nodejs\\node.exe"
 > ```
 
-Restart VS Code. The 11 cgraph tools will appear in Copilot Chat automatically.
+**That's it.** cgraph auto-indexes on the first Copilot query — no manual `cgraph index` needed. Open any project, ask Copilot a code question, and cgraph tools are available immediately.
 
 ### Teammate Setup (Quick Version)
 
@@ -107,17 +102,14 @@ cd agent_graph
 npm install
 npm run build
 npm link          # makes `cgraph` available globally
-cd ../your-project
-cgraph index      # index the target project
 ```
+Then add the MCP config to their VS Code user settings (see above).
 
 **If they DON'T have Node.js (system programmers, etc.):**
 1. Share the repo folder (zip, USB, network drive — whatever works)
 2. They run: `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows)
    or `bash install.sh` (macOS/Linux)
-3. Done — `cgraph` is on their PATH
-
-Then add the `.vscode/mcp.json` above to the target project. Done.
+3. Done — CLI on PATH + VS Code MCP configured globally. No per-project setup.
 
 ## CLI Commands
 

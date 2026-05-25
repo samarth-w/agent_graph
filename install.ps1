@@ -169,7 +169,66 @@ try {
         Write-Ok "$binDir already in PATH"
     }
 
-    # --- 6. Verify ---
+    # --- 6. Configure VS Code user-level MCP (works in ALL workspaces) ---
+    Write-Step "Configuring VS Code MCP (user-level, all workspaces)..."
+
+    $vscodeSettingsDir = Join-Path $env:APPDATA "Code\User"
+    $vscodeSettingsFile = Join-Path $vscodeSettingsDir "settings.json"
+
+    if (Test-Path $vscodeSettingsFile) {
+        $settingsRaw = Get-Content $vscodeSettingsFile -Raw -Encoding UTF8
+        # Remove trailing whitespace/newlines for clean parsing
+        $settingsRaw = $settingsRaw.Trim()
+        if (-not $settingsRaw) { $settingsRaw = '{}' }
+    } else {
+        New-Item -ItemType Directory -Path $vscodeSettingsDir -Force | Out-Null
+        $settingsRaw = '{}'
+    }
+
+    $nodePathEscaped = $nodePath -replace '\\', '\\\\'
+    $cgraphJsEscaped = (Join-Path $cgraphDir "bin\cgraph.js") -replace '\\', '\\\\'
+
+    if ($settingsRaw -match '"cgraph"') {
+        Write-Ok "cgraph MCP already configured in VS Code settings"
+    } else {
+        # Build the MCP server entry
+        $mcpBlock = @"
+    "cgraph": {
+      "command": "$nodePathEscaped",
+      "args": ["$cgraphJsEscaped", "serve", "--mcp"],
+      "cwd": "`${workspaceFolder}"
+    }
+"@
+
+        if ($settingsRaw -match '"mcp"\s*:\s*\{\s*"servers"\s*:\s*\{') {
+            # mcp.servers exists — inject cgraph into it
+            $settingsRaw = $settingsRaw -replace '("mcp"\s*:\s*\{\s*"servers"\s*:\s*\{)', "`$1`n$mcpBlock,"
+        } elseif ($settingsRaw -match '"mcp"\s*:\s*\{') {
+            # mcp exists but no servers — add servers block
+            $settingsRaw = $settingsRaw -replace '("mcp"\s*:\s*\{)', "`$1`n  `"servers`": {`n$mcpBlock`n  },"
+        } else {
+            # No mcp key at all — add it before the closing brace
+            $mcpSection = @"
+
+  "mcp": {
+    "servers": {
+$mcpBlock
+    }
+  }
+"@
+            if ($settingsRaw -eq '{}') {
+                $settingsRaw = "{$mcpSection`n}"
+            } else {
+                $settingsRaw = $settingsRaw -replace '\}\s*$', ",$mcpSection`n}"
+            }
+        }
+
+        $settingsRaw | Set-Content $vscodeSettingsFile -Encoding UTF8
+        Write-Ok "Added cgraph MCP server to VS Code user settings"
+        Write-Ok "cgraph is now available in ALL workspaces — no per-project setup needed"
+    }
+
+    # --- 7. Verify ---
     Write-Step "Verifying installation..."
     $testOutput = & $launcherPath --version 2>&1 | Out-String
     Write-Ok "cgraph $($testOutput.Trim()) installed successfully!"
@@ -188,23 +247,15 @@ Write-Host "  Install dir:  $InstallDir" -ForegroundColor White
 Write-Host "  Command:      cgraph" -ForegroundColor White
 Write-Host "  Node:         $nodePath" -ForegroundColor White
 Write-Host ""
-Write-Host "  Quick start:" -ForegroundColor Yellow
-Write-Host "    cd your-project" -ForegroundColor White
-Write-Host "    cgraph index              # index your code" -ForegroundColor White
+Write-Host "  VS Code MCP:  Configured globally (user settings)" -ForegroundColor Green
+Write-Host "                Works in ALL workspaces automatically" -ForegroundColor Green
+Write-Host "                Auto-indexes on first Copilot query" -ForegroundColor Green
+Write-Host ""
+Write-Host "  That's it — open any project in VS Code and ask Copilot!" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  CLI also available:" -ForegroundColor Yellow
+Write-Host "    cgraph index              # manual index" -ForegroundColor White
 Write-Host "    cgraph status             # check what was indexed" -ForegroundColor White
 Write-Host "    cgraph search myFunction  # find symbols" -ForegroundColor White
 Write-Host "    cgraph callers myFunction # who calls it?" -ForegroundColor White
-Write-Host ""
-Write-Host "  VS Code + Copilot setup:" -ForegroundColor Yellow
-Write-Host "    Create .vscode/mcp.json in your project with:" -ForegroundColor White
-Write-Host ""
-Write-Host "    {" -ForegroundColor DarkGray
-Write-Host "      `"servers`": {" -ForegroundColor DarkGray
-Write-Host "        `"cgraph`": {" -ForegroundColor DarkGray
-Write-Host "          `"command`": `"$($nodePath -replace '\\','\\')`"," -ForegroundColor DarkGray
-Write-Host "          `"args`": [`"$($cgraphDir -replace '\\','\\')\\bin\\cgraph.js`", `"serve`", `"--mcp`"]," -ForegroundColor DarkGray
-Write-Host "          `"cwd`": `"`${workspaceFolder}`"" -ForegroundColor DarkGray
-Write-Host "        }" -ForegroundColor DarkGray
-Write-Host "      }" -ForegroundColor DarkGray
-Write-Host "    }" -ForegroundColor DarkGray
 Write-Host ""

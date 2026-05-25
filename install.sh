@@ -170,6 +170,68 @@ step "Verifying..."
 TEST_VER=$("$BIN_DIR/cgraph" --version 2>&1 || true)
 ok "cgraph $TEST_VER installed!"
 
+# --- 6. Configure VS Code user-level MCP (works in ALL workspaces) ---
+step "Configuring VS Code MCP (user-level, all workspaces)..."
+
+# Find VS Code settings directory
+if [ "$(uname -s)" = "Darwin" ]; then
+    VSCODE_SETTINGS_DIR="$HOME/Library/Application Support/Code/User"
+else
+    VSCODE_SETTINGS_DIR="$HOME/.config/Code/User"
+fi
+VSCODE_SETTINGS_FILE="$VSCODE_SETTINGS_DIR/settings.json"
+
+NODE_BIN_ESCAPED=$(echo "$NODE_BIN" | sed 's/\//\\\//g')
+CGRAPH_JS_ESCAPED=$(echo "$CGRAPH_DIR/bin/cgraph.js" | sed 's/\//\\\//g')
+
+if [ -f "$VSCODE_SETTINGS_FILE" ] && grep -q '"cgraph"' "$VSCODE_SETTINGS_FILE" 2>/dev/null; then
+    ok "cgraph MCP already configured in VS Code settings"
+elif command -v python3 >/dev/null 2>&1; then
+    # Use python3 for safe JSON manipulation
+    mkdir -p "$VSCODE_SETTINGS_DIR"
+    [ -f "$VSCODE_SETTINGS_FILE" ] || echo '{}' > "$VSCODE_SETTINGS_FILE"
+
+    python3 -c "
+import json, sys
+
+with open('$VSCODE_SETTINGS_FILE', 'r') as f:
+    try:
+        settings = json.load(f)
+    except:
+        settings = {}
+
+if 'mcp' not in settings:
+    settings['mcp'] = {}
+if 'servers' not in settings['mcp']:
+    settings['mcp']['servers'] = {}
+
+settings['mcp']['servers']['cgraph'] = {
+    'command': '$NODE_BIN',
+    'args': ['$CGRAPH_DIR/bin/cgraph.js', 'serve', '--mcp'],
+    'cwd': '\${workspaceFolder}'
+}
+
+with open('$VSCODE_SETTINGS_FILE', 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        ok "Added cgraph MCP server to VS Code user settings"
+        ok "cgraph is now available in ALL workspaces — no per-project setup needed"
+    else
+        warn "Could not auto-configure VS Code. See manual setup below."
+    fi
+else
+    warn "python3 not found — cannot auto-configure VS Code settings"
+    warn "Add this to your VS Code settings.json manually (see below)"
+fi
+
+# --- 7. Verify ---
+step "Verifying..."
+TEST_VER=$("$BIN_DIR/cgraph" --version 2>&1 || true)
+ok "cgraph $TEST_VER installed!"
+
 # --- Done ---
 echo
 echo "============================"
@@ -180,23 +242,15 @@ echo "  Install dir:  $INSTALL_DIR"
 echo "  Command:      cgraph"
 echo "  Node:         $NODE_BIN"
 echo
-echo "  Quick start:"
-echo "    cd your-project"
-echo "    cgraph index              # index your code"
+echo "  VS Code MCP:  Configured globally (user settings)"
+echo "                Works in ALL workspaces automatically"
+echo "                Auto-indexes on first Copilot query"
+echo
+echo "  That's it — open any project in VS Code and ask Copilot!"
+echo
+echo "  CLI also available:"
+echo "    cgraph index              # manual index"
 echo "    cgraph status             # check what was indexed"
 echo "    cgraph search myFunction  # find symbols"
 echo "    cgraph callers myFunction # who calls it?"
-echo
-echo "  VS Code + Copilot setup:"
-echo "    Create .vscode/mcp.json in your project:"
-echo
-echo "    {"
-echo "      \"servers\": {"
-echo "        \"cgraph\": {"
-echo "          \"command\": \"$NODE_BIN\","
-echo "          \"args\": [\"$CGRAPH_DIR/bin/cgraph.js\", \"serve\", \"--mcp\"],"
-echo "          \"cwd\": \"\${workspaceFolder}\""
-echo "        }"
-echo "      }"
-echo "    }"
 echo
