@@ -4,7 +4,7 @@
 # No prerequisites needed (installs Node.js if missing).
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR-ORG/cgraph/master/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/samarth-w/agent_graph/master/install.sh | bash
 #
 #   # Or with options:
 #   INSTALL_DIR=~/tools/cgraph bash install.sh
@@ -13,7 +13,7 @@ set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.cgraph-install}"
 NODE_VERSION="${NODE_VERSION:-22.16.0}"
-REPO_URL="${REPO_URL:-https://github.com/YOUR-ORG/cgraph.git}"
+REPO_URL="${REPO_URL:-https://github.com/samarth-w/agent_graph.git}"
 
 step()  { printf "\n\033[36m=> %s\033[0m\n" "$1"; }
 ok()    { printf "   \033[32m%s\033[0m\n" "$1"; }

@@ -106,14 +106,14 @@ if (Test-Path (Join-Path $cgraphDir "package.json")) {
 } elseif ($hasGit) {
     # Clone via git
     Write-Host "   Cloning cgraph repository..."
-    git clone "https://github.com/YOUR-ORG/cgraph.git" $cgraphDir
+    git clone "https://github.com/samarth-w/agent_graph.git" $cgraphDir
 } else {
     # Download as zip (no git required)
     Write-Host "   Downloading cgraph (no git needed)..."
-    $zipUrl = "https://github.com/YOUR-ORG/cgraph/archive/refs/heads/master.zip"
+    $zipUrl = "https://github.com/samarth-w/agent_graph/archive/refs/heads/master.zip"
     $zipFile = Join-Path $InstallDir "cgraph.zip"
 
-    Write-Warn "PLACEHOLDER: Replace YOUR-ORG/cgraph with your actual repo URL"
+    # Download zip from GitHub
     Write-Warn "For now, assuming cgraph source is at: $cgraphDir"
 
     # If running locally, copy from current directory

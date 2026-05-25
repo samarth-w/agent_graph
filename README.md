@@ -27,7 +27,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 **macOS / Linux:**
 ```bash
 # After repo is hosted, this will work as a one-liner:
-# curl -fsSL https://raw.githubusercontent.com/YOUR-ORG/cgraph/master/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/samarth-w/agent_graph/master/install.sh | bash
 
 # For now, from a shared copy:
 bash install.sh
