@@ -6,7 +6,7 @@
  */
 import type { ParsedQuery } from './types';
 
-const FIELD_RE = /\b(kind|lang|language|path|file|name):(\S+)/gi;
+const FIELD_RE = /\b(kind|lang|language|path|file|name|role|exported):(\S+)/gi;
 
 export function parseQuery(raw: string): ParsedQuery {
   const result: ParsedQuery = { terms: [] };
@@ -28,6 +28,12 @@ export function parseQuery(raw: string): ParsedQuery {
         break;
       case 'name':
         result.name = value;
+        break;
+      case 'role':
+        result.role = value.toLowerCase();
+        break;
+      case 'exported':
+        result.exported = value.toLowerCase() === 'true' || value === '1';
         break;
     }
     return ''; // remove from free-text

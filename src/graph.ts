@@ -484,3 +484,236 @@ function globToRegex(pattern: string): RegExp {
     .replace(/\{\{GLOBSTAR\}\}/g, '.*');
   return new RegExp(escaped, 'i');
 }
+
+// ─── dead code detection ────────────────────────────────────────
+export interface DeadCodeResult {
+  dead_symbols: { name: string; kind: string; file: string; line: number; signature: string | null }[];
+  total: number;
+  by_kind: Record<string, number>;
+  by_file: Record<string, number>;
+}
+
+export function findDeadCode(
+  db: GraphDB,
+  opts: { kind?: string; file?: string; limit?: number } = {},
+): DeadCodeResult {
+  const allNodes = db.getAllNodes();
+  let dead: typeof allNodes = [];
+
+  for (const node of allNodes) {
+    if (node.role !== 'dead') continue;
+    dead.push(node);
+  }
+
+  if (opts.kind) {
+    dead = dead.filter(n => n.kind === opts.kind);
+  }
+
+  if (opts.file) {
+    dead = dead.filter(n => {
+      const f = db.getFileById(n.file_id);
+      return f && f.path.includes(opts.file!);
+    });
+  }
+
+  const byKind: Record<string, number> = {};
+  const byFile: Record<string, number> = {};
+  const symbols = dead.map(n => {
+    const f = db.getFileById(n.file_id);
+    const fp = f?.path ?? '';
+    byKind[n.kind] = (byKind[n.kind] || 0) + 1;
+    byFile[fp] = (byFile[fp] || 0) + 1;
+    return { name: n.name, kind: n.kind, file: fp, line: n.start_line, signature: n.signature };
+  });
+
+  const limit = opts.limit ?? 100;
+  return {
+    dead_symbols: symbols.slice(0, limit),
+    total: symbols.length,
+    by_kind: byKind,
+    by_file: byFile,
+  };
+}
+
+// ─── cycle detection ────────────────────────────────────────────
+export interface CycleResult {
+  cycles: { path: string[]; files: string[]; length: number }[];
+  total: number;
+  files_with_cycles: string[];
+}
+
+export function findCycles(
+  db: GraphDB,
+  opts: { maxCycles?: number; edgeKinds?: EdgeKind[] } = {},
+): CycleResult {
+  const maxCycles = opts.maxCycles ?? 50;
+  const edgeKinds = opts.edgeKinds ?? ['calls', 'imports'];
+  const allNodes = db.getAllNodes();
+
+  const cycles: { path: string[]; files: string[]; length: number }[] = [];
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<number, number>();
+  const parent = new Map<number, number>();
+
+  // Build adjacency from specified edge kinds
+  const adj = new Map<number, number[]>();
+  for (const node of allNodes) {
+    const neighbors: number[] = [];
+    for (const kind of edgeKinds) {
+      for (const e of db.getEdgesFrom(node.id, kind)) {
+        neighbors.push(e.target_id);
+      }
+    }
+    adj.set(node.id, neighbors);
+    color.set(node.id, WHITE);
+  }
+
+  // DFS cycle detection
+  const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+
+  function dfs(u: number, stack: number[]): void {
+    if (cycles.length >= maxCycles) return;
+    color.set(u, GRAY);
+    stack.push(u);
+
+    for (const v of (adj.get(u) ?? [])) {
+      if (cycles.length >= maxCycles) return;
+      if (color.get(v) === GRAY) {
+        // Found cycle — extract from stack
+        const cycleStart = stack.indexOf(v);
+        if (cycleStart >= 0) {
+          const cycleIds = stack.slice(cycleStart);
+          const cyclePath = cycleIds.map(id => nodeMap.get(id)?.qualified_name ?? String(id));
+          const cycleFiles = [...new Set(cycleIds.map(id => {
+            const n = nodeMap.get(id);
+            if (!n) return '';
+            const f = db.getFileById(n.file_id);
+            return f?.path ?? '';
+          }).filter(Boolean))];
+
+          // Deduplicate — normalize cycle by starting from smallest element
+          const minIdx = cyclePath.indexOf([...cyclePath].sort()[0]);
+          const normalized = [...cyclePath.slice(minIdx), ...cyclePath.slice(0, minIdx)];
+          const key = normalized.join(' → ');
+          if (!seen.has(key)) {
+            seen.add(key);
+            cycles.push({ path: [...normalized, normalized[0]], files: cycleFiles, length: normalized.length });
+          }
+        }
+      } else if (color.get(v) === WHITE) {
+        dfs(v, stack);
+      }
+    }
+
+    stack.pop();
+    color.set(u, BLACK);
+  }
+
+  const seen = new Set<string>();
+  for (const node of allNodes) {
+    if (color.get(node.id) === WHITE && cycles.length < maxCycles) {
+      dfs(node.id, []);
+    }
+  }
+
+  const filesWithCycles = [...new Set(cycles.flatMap(c => c.files))].sort();
+  return { cycles, total: cycles.length, files_with_cycles: filesWithCycles };
+}
+
+// ─── project stats / metrics ────────────────────────────────────
+export interface ProjectStats {
+  total_files: number;
+  total_nodes: number;
+  total_edges: number;
+  avg_fan_in: number;
+  avg_fan_out: number;
+  max_fan_in: { symbol: string; file: string; count: number };
+  max_fan_out: { symbol: string; file: string; count: number };
+  hotspots: { symbol: string; file: string; fan_in: number; fan_out: number; coupling: number }[];
+  file_coupling: { file: string; imports_from: number; imported_by: number; coupling: number }[];
+  complexity_distribution: Record<string, number>;
+}
+
+export function getProjectStats(
+  db: GraphDB,
+  opts: { limit?: number } = {},
+): ProjectStats {
+  const limit = opts.limit ?? 15;
+  const allNodes = db.getAllNodes();
+  const allFiles = db.getAllFiles();
+
+  let totalFanIn = 0, totalFanOut = 0;
+  let maxIn = { symbol: '', file: '', count: 0 };
+  let maxOut = { symbol: '', file: '', count: 0 };
+  const nodeMetrics: { name: string; file: string; fanIn: number; fanOut: number }[] = [];
+
+  for (const node of allNodes) {
+    const fanIn = db.getEdgesTo(node.id, 'calls').length;
+    const fanOut = db.getEdgesFrom(node.id, 'calls').length;
+    totalFanIn += fanIn;
+    totalFanOut += fanOut;
+    const f = db.getFileById(node.file_id);
+    const fp = f?.path ?? '';
+
+    if (fanIn > maxIn.count) maxIn = { symbol: node.name, file: fp, count: fanIn };
+    if (fanOut > maxOut.count) maxOut = { symbol: node.name, file: fp, count: fanOut };
+    nodeMetrics.push({ name: node.name, file: fp, fanIn, fanOut });
+  }
+
+  const n = allNodes.length || 1;
+  const hotspots = nodeMetrics
+    .map(m => ({ symbol: m.name, file: m.file, fan_in: m.fanIn, fan_out: m.fanOut, coupling: m.fanIn + m.fanOut }))
+    .sort((a, b) => b.coupling - a.coupling)
+    .slice(0, limit);
+
+  // File-level coupling
+  const fileCoupling = new Map<string, { importsFrom: Set<string>; importedBy: Set<string> }>();
+  for (const f of allFiles) {
+    fileCoupling.set(f.path, { importsFrom: new Set(), importedBy: new Set() });
+  }
+  const allEdges = db.getAllEdges();
+  for (const e of allEdges) {
+    if (e.kind !== 'imports') continue;
+    const srcNode = db.getNode(e.source_id);
+    const tgtNode = db.getNode(e.target_id);
+    if (!srcNode || !tgtNode) continue;
+    const srcFile = db.getFileById(srcNode.file_id);
+    const tgtFile = db.getFileById(tgtNode.file_id);
+    if (!srcFile || !tgtFile || srcFile.path === tgtFile.path) continue;
+    fileCoupling.get(srcFile.path)?.importsFrom.add(tgtFile.path);
+    fileCoupling.get(tgtFile.path)?.importedBy.add(srcFile.path);
+  }
+
+  const fileCouplingArr = [...fileCoupling.entries()]
+    .map(([file, data]) => ({
+      file,
+      imports_from: data.importsFrom.size,
+      imported_by: data.importedBy.size,
+      coupling: data.importsFrom.size + data.importedBy.size,
+    }))
+    .sort((a, b) => b.coupling - a.coupling)
+    .slice(0, limit);
+
+  // Complexity distribution (fan-out buckets)
+  const dist: Record<string, number> = { '0': 0, '1-3': 0, '4-7': 0, '8-15': 0, '16+': 0 };
+  for (const m of nodeMetrics) {
+    if (m.fanOut === 0) dist['0']++;
+    else if (m.fanOut <= 3) dist['1-3']++;
+    else if (m.fanOut <= 7) dist['4-7']++;
+    else if (m.fanOut <= 15) dist['8-15']++;
+    else dist['16+']++;
+  }
+
+  return {
+    total_files: allFiles.length,
+    total_nodes: allNodes.length,
+    total_edges: allEdges.length,
+    avg_fan_in: Math.round((totalFanIn / n) * 100) / 100,
+    avg_fan_out: Math.round((totalFanOut / n) * 100) / 100,
+    max_fan_in: maxIn,
+    max_fan_out: maxOut,
+    hotspots,
+    file_coupling: fileCouplingArr,
+    complexity_distribution: dist,
+  };
+}

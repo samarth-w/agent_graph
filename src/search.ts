@@ -23,9 +23,21 @@ export function searchSymbols(
     ? parsed.terms.join(' ')
     : parsed.name ?? '';
 
-  let results = searchTerms
-    ? db.ftsSearch(searchTerms, (opts.limit ?? 20) * 2)  // over-fetch for filtering
-    : db.ftsSearch('*', (opts.limit ?? 20) * 2);
+  const hasOnlyFilters = !searchTerms && (effectiveKind || effectiveFile || parsed.lang || parsed.role || parsed.exported !== undefined);
+
+  let results: SearchResult[];
+  if (hasOnlyFilters) {
+    // No text search — fetch all nodes and rely on post-filters
+    const allNodes = db.getAllNodes();
+    results = allNodes.map(n => {
+      const f = db.getFileById(n.file_id);
+      return { node: n, file_path: f?.path ?? '', rank: 0 };
+    });
+  } else {
+    results = searchTerms
+      ? db.ftsSearch(searchTerms, (opts.limit ?? 20) * 2)  // over-fetch for filtering
+      : db.ftsSearch('*', (opts.limit ?? 20) * 2);
+  }
 
   // Post-filter by kind
   if (effectiveKind) {
@@ -52,6 +64,17 @@ export function searchSymbols(
       if (lang === 'java') return fp.endsWith('.java');
       return true;
     });
+  }
+
+  // Post-filter by role
+  if (parsed.role) {
+    results = results.filter(r => r.node.role === parsed.role);
+  }
+
+  // Post-filter by exported
+  if (parsed.exported !== undefined) {
+    const exp = parsed.exported ? 1 : 0;
+    results = results.filter(r => r.node.exported === exp);
   }
 
   const limit = opts.limit ?? 20;

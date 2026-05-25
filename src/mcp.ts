@@ -11,7 +11,7 @@ import path from 'path';
 import readline from 'readline';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected } from './graph';
+import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats } from './graph';
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DB_DIR } from './config';
@@ -196,6 +196,39 @@ const TOOLS: McpToolDef[] = [
       },
     },
   },
+  {
+    name: 'cgraph_deadcode',
+    description: 'Find dead code — symbols with no callers and not exported. Lists unused functions, classes, and variables that may be safe to remove.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', description: 'Filter by symbol kind (function, class, method, etc.)' },
+        file: { type: 'string', description: 'Filter by file path substring' },
+        limit: { type: 'number', description: 'Max results (default: 100)', default: 100 },
+      },
+    },
+  },
+  {
+    name: 'cgraph_cycles',
+    description: 'Detect circular dependencies (import cycles and call cycles) in the code graph. Useful for finding architectural issues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        maxCycles: { type: 'number', description: 'Max cycles to report (default: 50)', default: 50 },
+        edgeKinds: { type: 'string', description: 'Edge types to follow: calls, imports, or both (default: both)', enum: ['calls', 'imports', 'both'], default: 'both' },
+      },
+    },
+  },
+  {
+    name: 'cgraph_stats',
+    description: 'Get project-wide code metrics: fan-in/fan-out averages, hotspots (most coupled symbols), file coupling, and complexity distribution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Max items in hotspots/file-coupling lists (default: 15)', default: 15 },
+      },
+    },
+  },
 ];
 
 // ─── Tool handler ──────────────────────────────────────────────
@@ -255,6 +288,7 @@ class ToolHandler {
   private static CACHEABLE = new Set([
     'cgraph_search', 'cgraph_callers', 'cgraph_callees', 'cgraph_impact',
     'cgraph_node', 'cgraph_trace', 'cgraph_files', 'cgraph_status', 'cgraph_export',
+    'cgraph_deadcode', 'cgraph_cycles', 'cgraph_stats',
   ]);
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
@@ -282,6 +316,9 @@ class ToolHandler {
         case 'cgraph_affected': result = await this.handleAffected(args); break;
         case 'cgraph_export': result = await this.handleExport(args); break;
         case 'cgraph_changed': result = await this.handleChanged(args); break;
+        case 'cgraph_deadcode': result = await this.handleDeadCode(args); break;
+        case 'cgraph_cycles': result = await this.handleCycles(args); break;
+        case 'cgraph_stats': result = await this.handleStats(args); break;
         default:
           return this.errorResult(`Unknown tool: ${toolName}`);
       }
@@ -573,6 +610,86 @@ class ToolHandler {
       lines.push(`- ${s.name} (${s.kind}) — ${s.file}:${s.start_line} [${tag}]`);
     }
     lines.push('', '> Use cgraph_impact on these symbols to see what might break.');
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleDeadCode(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const result = findDeadCode(db, {
+      kind: args.kind as string | undefined,
+      file: args.file as string | undefined,
+      limit: args.limit != null ? clamp(Number(args.limit), 1, 500) : undefined,
+    });
+    if (result.total === 0) return this.textResult('No dead code found.');
+    const lines = [`## Dead Code Report (${result.total} symbols)`, ''];
+    lines.push('### By Kind');
+    for (const [kind, count] of Object.entries(result.by_kind).sort((a, b) => b[1] - a[1])) {
+      lines.push(`- ${kind}: ${count}`);
+    }
+    lines.push('', '### By File');
+    for (const [file, count] of Object.entries(result.by_file).sort((a, b) => b[1] - a[1]).slice(0, 15)) {
+      lines.push(`- ${file}: ${count}`);
+    }
+    lines.push('', '### Symbols');
+    for (const s of result.dead_symbols) {
+      lines.push(`- **${s.name}** (${s.kind}) — ${s.file}:${s.line}`);
+    }
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleCycles(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const edgeKindStr = (args.edgeKinds as string) || 'both';
+    const edgeKinds = edgeKindStr === 'both' ? ['calls', 'imports'] as any[]
+      : [edgeKindStr] as any[];
+    const result = findCycles(db, {
+      maxCycles: args.maxCycles != null ? clamp(Number(args.maxCycles), 1, 100) : undefined,
+      edgeKinds,
+    });
+    if (result.total === 0) return this.textResult('No circular dependencies detected.');
+    const lines = [`## Circular Dependencies (${result.total} cycles)`, ''];
+    lines.push(`**Files with cycles:** ${result.files_with_cycles.length}`);
+    lines.push('');
+    for (let i = 0; i < result.cycles.length; i++) {
+      const c = result.cycles[i];
+      lines.push(`### Cycle ${i + 1} (${c.length} nodes)`);
+      lines.push(c.path.join(' → '));
+      lines.push(`Files: ${c.files.join(', ')}`);
+      lines.push('');
+    }
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleStats(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const stats = getProjectStats(db, {
+      limit: args.limit != null ? clamp(Number(args.limit), 1, 50) : undefined,
+    });
+    const lines = [
+      '## Project Metrics', '',
+      `| Metric | Value |`,
+      `|--------|-------|`,
+      `| Files | ${stats.total_files} |`,
+      `| Symbols | ${stats.total_nodes} |`,
+      `| Edges | ${stats.total_edges} |`,
+      `| Avg fan-in | ${stats.avg_fan_in} |`,
+      `| Avg fan-out | ${stats.avg_fan_out} |`,
+      `| Max fan-in | ${stats.max_fan_in.symbol} (${stats.max_fan_in.count}) in ${stats.max_fan_in.file} |`,
+      `| Max fan-out | ${stats.max_fan_out.symbol} (${stats.max_fan_out.count}) in ${stats.max_fan_out.file} |`,
+      '',
+      '### Hotspots (most coupled symbols)',
+    ];
+    for (const h of stats.hotspots) {
+      lines.push(`- **${h.symbol}** — fan-in: ${h.fan_in}, fan-out: ${h.fan_out}, coupling: ${h.coupling} (${h.file})`);
+    }
+    lines.push('', '### File Coupling');
+    for (const f of stats.file_coupling) {
+      lines.push(`- ${f.file} — imports: ${f.imports_from}, imported by: ${f.imported_by}, coupling: ${f.coupling}`);
+    }
+    lines.push('', '### Complexity Distribution (fan-out)');
+    for (const [bucket, count] of Object.entries(stats.complexity_distribution)) {
+      lines.push(`- ${bucket}: ${count}`);
+    }
     return this.textResult(lines.join('\n'));
   }
 

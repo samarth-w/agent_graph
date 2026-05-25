@@ -305,6 +305,8 @@ export interface ParsedQuery {
   file?: string;
   lang?: string;
   name?: string;
+  role?: string;
+  exported?: boolean;
 }
 
 // ─── Framework route ───────────────────────────────────────────

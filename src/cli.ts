@@ -10,7 +10,7 @@ import path from 'path';
 import fs from 'fs';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected } from './graph';
+import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats } from './graph';
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DEFAULT_CONFIG } from './config';
@@ -575,6 +575,83 @@ program
         testPattern: opts.filter,
       });
       out(result, opts.pretty);
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph deadcode ─────────────────────────────────────────────
+program
+  .command('deadcode')
+  .description('Find dead code — symbols with no callers and not exported')
+  .option('--kind <kind>', 'filter by symbol kind (function, class, method, etc.)')
+  .option('--file <path>', 'filter by file path substring')
+  .option('--limit <n>', 'max results', '100')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const result = findDeadCode(db, {
+        kind: opts.kind,
+        file: opts.file,
+        limit: parseInt(opts.limit, 10),
+      });
+      if (opts.json) {
+        out(result);
+      } else {
+        out(result, true);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph cycles ───────────────────────────────────────────────
+program
+  .command('cycles')
+  .description('Detect circular dependencies in the code graph')
+  .option('--max <n>', 'max cycles to report', '50')
+  .option('--edges <type>', 'edge types: calls, imports, both', 'both')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const edgeKinds = opts.edges === 'both' ? ['calls', 'imports'] as any[]
+        : [opts.edges] as any[];
+      const result = findCycles(db, {
+        maxCycles: parseInt(opts.max, 10),
+        edgeKinds,
+      });
+      if (opts.json) {
+        out(result);
+      } else {
+        out(result, true);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph stats ────────────────────────────────────────────────
+program
+  .command('stats')
+  .description('Get project-wide code metrics: hotspots, coupling, complexity')
+  .option('--limit <n>', 'max items in lists', '15')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const result = getProjectStats(db, {
+        limit: parseInt(opts.limit, 10),
+      });
+      if (opts.json) {
+        out(result);
+      } else {
+        out(result, true);
+      }
     } finally {
       db.close();
     }
