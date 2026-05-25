@@ -7,8 +7,8 @@ Local-first code graph CLI that gives GitHub Copilot (and other AI agents) insta
 ## Features
 
 - **Install and forget** — one-command installer configures everything, auto-indexes on first Copilot query
-- **11 MCP tools** — search, context, trace, explore, node, callers, callees, impact, files, status, affected
-- **5.7x faster agent workflows** — collapses multi-step grep→read chains into single precomputed queries ([benchmarks](#benchmarks))
+- **13 MCP tools** — search, context, trace, explore, node, callers, callees, impact, files, status, affected, export, changed
+- **5.1x faster agent workflows** — collapses multi-step grep→read chains into single precomputed queries ([benchmarks](#benchmarks))
 - **Multi-language** — TypeScript, JavaScript, JSX, TSX, Python
 - **Framework-aware** — Express, React Router, Next.js, Flask, FastAPI, Django route extraction
 - **Dynamic dispatch** — synthesizes edges for callbacks, event emitters, HOFs, promise chains
@@ -123,6 +123,8 @@ Then add the MCP config to their VS Code user settings (see above).
 | `where <symbol>` | Find where a symbol is defined |
 | `files` | List indexed files |
 | `affected <files>` | Find test files affected by changes |
+| `export` | Generate Mermaid or DOT diagrams |
+| `changed` | Show symbols changed in git diff |
 | `watch` | Watch for file changes and re-index |
 | `serve --mcp` | Start MCP server (used by AI agents) |
 
@@ -154,33 +156,30 @@ When running as an MCP server (`cgraph serve --mcp`), these tools are available 
 | `cgraph_files` | List indexed files |
 | `cgraph_status` | Index health check |
 | `cgraph_affected` | Find affected test files |
+| `cgraph_export` | Generate Mermaid/DOT diagrams |
+| `cgraph_changed` | Map git diff to changed symbols |
 
 ## Benchmarks
 
-cgraph collapses multi-step agent workflows into single precomputed queries. Benchmarked on a **tic-tac-toe demo** (8 files, 49 nodes, 110 edges) and **cgraph's own codebase** (23 files, 272 nodes, 416 edges).
+cgraph collapses multi-step agent workflows into single precomputed queries. Benchmarked on a **personal finance tracker** (16 files, 168 symbols, 1006 edges) — a real-world TypeScript app with services, events, reports, and API layers.
 
-### Tic-Tac-Toe Demo (live benchmark)
+### Finance Demo (16 source files)
 
-| Task | Without cgraph | With cgraph | Speedup |
-|------|---------------|-------------|----------|
-| Refactor `minimax` — what breaks? | 5 tool calls | **1 call** (`impact`) | 5x fewer calls |
-| How does user input reach the board? | 4 tool calls, found 4 functions | **1 call** (`callees`), found **27 functions** | 4x fewer calls, 6.7x more complete |
-| Changed `checkWinner` — what's affected? | 2 calls + manual tracing, found ~5 symbols | **1 call** (`impact`), found **12 symbols** across 4 files | 2.4x more coverage |
-| **Totals** | **11 calls**, partial results | **3 calls**, complete results | **3.7x fewer calls** |
+| Question | Without cgraph | With cgraph | Speedup | Token Savings |
+|----------|---------------|-------------|---------|---------------|
+| Where is `formatMoney` defined and who calls it? | 7 calls, 14.0s | **1 call**, 2.2s | **6.5x** | 68% ↓ |
+| Impact of changing `ApiController`? | 6 calls, 12.0s | **1 call**, 2.2s | **5.6x** | 96% ↓ |
+| How does `createApp` reach `formatMoney`? | 4 calls, 8.0s | **1 call**, 2.2s | **3.6x** | 99% ↓ |
+| Changed `store.ts` — what tests to run? | 5 calls, 10.0s | **1 call**, 2.2s | **4.6x** | 98% ↓ |
+| Explain the architecture | 11 calls, 22.0s | **2 calls**, 4.4s | **5.0x** | — |
+| **Totals** | **33 calls, 66s** | **6 calls, 13s** | **5.1x faster** | **17% less context** |
 
-### Agent Workflow Benchmark (cgraph codebase)
+The benchmark auto-detects symbols from any target project. Run it yourself:
 
-| Question | Calls | Agent Time | Token Savings |
-|----------|-------|------------|---------------|
-| Where is `parseFile` defined and who calls it? | 4 → 1 | 8.0s → 2.2s | 41% ↓ |
-| Impact of changing `GraphDB.open`? | 10 → 1 | 20.0s → 2.2s | 92% ↓ |
-| How does CLI reach the database? | 7 → 1 | 14.0s → 2.2s | 100% ↓ |
-| Changed `config.ts` — what tests to run? | 5 → 1 | 10.0s → 2.2s | 99% ↓ |
-| Explain the architecture | 11 → 2 | 22.0s → 4.4s | 36% ↓ |
-| **Totals** | **37 → 6** | **74s → 13s (5.7x faster)** | **75% less context** |
+```bash
+node scripts/benchmark-agent.mjs <your-project-dir>
+```
 
-> Full benchmark details: [demo/demo_benchmark.md](demo/demo_benchmark.md)
->
 > Benchmark scripts: `scripts/benchmark.mjs`, `scripts/benchmark-agent.mjs`, `scripts/benchmark-compare.mjs`
 
 ## Project Structure
@@ -198,6 +197,10 @@ cgraph/
 │   ├── index.ts               # Public API re-exports
 │   ├── indexer.ts             # File walker + parser + edge resolver
 │   ├── mcp.ts                 # MCP server (JSON-RPC 2.0 over stdio)
+│   ├── adaptive.ts            # Dynamic traversal limits (codebase size + fan-out)
+│   ├── cache.ts               # LRU cache for MCP tool results
+│   ├── export.ts              # Mermaid / DOT diagram generation
+│   ├── git.ts                 # Git diff → changed symbol mapping
 │   ├── parser.ts              # Code parser (babel for JS/TS, regex for Python)
 │   ├── query-parser.ts        # Search query field extraction
 │   ├── search.ts              # Symbol search with filtering
@@ -206,14 +209,7 @@ cgraph/
 │   ├── types.ts               # All type definitions
 │   └── watcher.ts             # File watcher with debounced re-index
 ├── __tests__/                 # Test suite (vitest, 105 tests)
-│   ├── frameworks.test.ts
-│   ├── gitignore.test.ts
-│   ├── graph.test.ts
-│   ├── mcp.test.ts
-│   ├── parser.test.ts
-│   ├── query-parser.test.ts
-│   ├── storage.test.ts
-│   └── synthesizer.test.ts
+│   └── ...
 ├── scripts/
 │   ├── benchmark.mjs          # MCP server latency benchmark
 │   ├── benchmark-agent.mjs    # Agent workflow benchmark (with vs without)
@@ -222,8 +218,7 @@ cgraph/
 │   ├── setup-mcp.ps1          # Auto-configure .vscode/mcp.json
 │   └── smoke-test.ps1/.sh     # 19 end-to-end CLI tests
 ├── demo/
-│   ├── demo_benchmark.md      # Full benchmark results
-│   └── tictactoe/src/         # Tic-tac-toe demo project (8 files)
+│   └── finance/               # Personal finance tracker demo (16 files, 168 symbols)
 ├── python_test/               # Python test project (Flask app, 6 files)
 ├── install.ps1                # Windows standalone installer
 ├── install.sh                 # macOS/Linux standalone installer
