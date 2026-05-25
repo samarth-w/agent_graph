@@ -9,7 +9,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-8B5CF6?style=for-the-badge)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/Tests-183%20passing-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
+[![Tests](https://img.shields.io/badge/Tests-216%20passing-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
 [![License](https://img.shields.io/badge/License-AGPL--3.0-EF4444?style=for-the-badge)](LICENSE)
 
 ```
@@ -18,7 +18,7 @@
   │  Agent  │  JSON-RPC    │  Server  │   sql.js     │ graph.db │
   └─────────┘              └──────────┘              └──────────┘
        │                        ▲                         ▲
-       │ "who calls             │ 17 tools                │ files, nodes,
+       │ "who calls             │ 22 tools                │ files, nodes,
        │  handleRequest?"       │ instant response        │ edges, roles
        ▼                        │                         │
   ┌─────────┐              ┌──────────┐              ┌──────────┐
@@ -169,7 +169,7 @@ Add to your VS Code `settings.json` (Ctrl+Shift+P → "Open User Settings (JSON)
 
 ## 🔧 MCP Tools
 
-When running as an MCP server, **17 tools** are available to AI agents:
+When running as an MCP server, **22 tools** are available to AI agents:
 
 ```mermaid
 graph LR
@@ -193,6 +193,13 @@ graph LR
         L[cgraph_stats]
         M[cgraph_suggest]
     end
+    subgraph "🧠 Agentic Intelligence"
+        R[cgraph_auto_context]
+        S[cgraph_intent_search]
+        T[cgraph_validate_plan]
+        U[cgraph_lint]
+        V[cgraph_dna]
+    end
     subgraph "📦 Utilities"
         N[cgraph_status]
         O[cgraph_files]
@@ -204,6 +211,8 @@ graph LR
     style G fill:#8B5CF6,color:#fff
     style H fill:#EF4444,color:#fff
     style M fill:#F59E0B,color:#fff
+    style R fill:#10B981,color:#fff
+    style T fill:#EC4899,color:#fff
 ```
 
 | Tool | What it does | When to use |
@@ -224,6 +233,11 @@ graph LR
 | `cgraph_suggest` | Refactoring suggestions | Extract, inline, move, split recommendations |
 | `cgraph_export` | Mermaid / DOT / HTML diagrams | Visualization & docs |
 | `cgraph_files` | List all indexed files | Inventory check |
+| `cgraph_auto_context` | File-level warm start: symbols, callers, callees, tests | **Open a file** — instant awareness before coding |
+| `cgraph_intent_search` | Natural language symbol search (BM25) | "find auth middleware" — searches by meaning, not just name |
+| `cgraph_validate_plan` | Pre-flight change risk assessment | Before refactoring — blast radius, affected tests, risk score |
+| `cgraph_lint` | Architecture rule enforcement | CI gate — deny imports, max fan-out, cycle checks |
+| `cgraph_dna` | Codebase fingerprint & health scores | Onboarding — languages, architecture style, health overview |
 | `cgraph_status` | Index health & stats | Debugging, verification |
 
 ---
@@ -259,6 +273,16 @@ cgraph <command> [options]
 | `cycles` | Detect circular dependencies |
 | `stats` | Project metrics — hotspots, coupling, complexity |
 | `suggest` | AI-powered refactoring suggestions |
+
+### Agentic Intelligence Commands
+
+| Command | Description |
+|:--------|:------------|
+| `auto-context <file>` | File-level warm start — symbols, callers, callees, related tests |
+| `intent <query>` | Natural language symbol search (BM25 scoring) |
+| `validate` | Pre-flight change risk assessment from stdin |
+| `lint` | Architecture rule enforcement via `.cgraph.json` rules |
+| `dna` | Codebase fingerprint — languages, health scores, architecture style |
 
 ### Infrastructure Commands
 
@@ -354,7 +378,7 @@ Drop a `.cgraph.json` in your project root to customize behavior:
 # Agent workflow comparison (with vs without cgraph)
 node scripts/benchmark-agent.mjs <your-project-dir>
 
-# MCP server latency (17 tools, burst, cold start)
+# MCP server latency (22 tools, burst, cold start)
 node scripts/benchmark.mjs
 
 # Raw efficiency comparison (grep+read vs cgraph)
@@ -491,12 +515,13 @@ cgraph/
 │   ├── context.ts                 # Context builder (search → expand → snippets)
 │   ├── graph.ts                   # BFS traversal, impact, trace, dead code, cycles, suggest
 │   ├── indexer.ts                 # File walker + parallel parser + incremental edge resolver
-│   ├── mcp.ts                     # MCP server (17 tools, JSON-RPC 2.0, progress notifications)
+│   ├── mcp.ts                     # MCP server (22 tools, JSON-RPC 2.0, progress notifications)
 │   ├── storage.ts                 # GraphDB (sql.js WASM SQLite)
 │   ├── parser.ts                  # Multi-language parser (babel + regex)
 │   ├── synthesizer.ts             # Dynamic dispatch edge synthesis
 │   ├── frameworks.ts              # Framework route extraction
-│   ├── search.ts                  # Fuzzy symbol search with filters
+│   ├── lint.ts                    # Architecture rule enforcement engine
+│   ├── search.ts                  # Fuzzy symbol search + BM25 intent search
 │   ├── export.ts                  # Mermaid / DOT / HTML diagram generation
 │   ├── cache.ts                   # LRU cache with disk persistence
 │   ├── watcher.ts                 # File watcher with debounced re-index
@@ -505,7 +530,7 @@ cgraph/
 │   ├── query-parser.ts            # Search query field extraction
 │   ├── gitignore.ts               # .gitignore parsing
 │   └── types.ts                   # All type definitions
-├── __tests__/                     # 183 tests (vitest)
+├── __tests__/                     # 216 tests (vitest)
 ├── scripts/                       # Benchmarks, installers, smoke tests
 ├── demo/                          # Finance tracker + C++/Shell demos
 ├── install.ps1 / install.sh       # Standalone installers
@@ -519,7 +544,7 @@ cgraph/
 ```bash
 npm run build              # compile TypeScript
 npm run dev                # watch mode (rebuild on save)
-npm test                   # run 183 unit tests
+npm test                   # run 216 unit tests
 npm run test:watch         # watch tests
 ```
 
@@ -532,7 +557,7 @@ npm run test:watch         # watch tests
 | `scripts/local-install.ps1` / `.sh` | Build + npm link for dev testing |
 | `scripts/smoke-test.ps1` / `.sh` | 19 end-to-end CLI tests |
 | `scripts/setup-mcp.ps1` | Auto-configure MCP for a project |
-| `scripts/benchmark.mjs` | MCP server latency (17 tools, burst, cold start) |
+| `scripts/benchmark.mjs` | MCP server latency (22 tools, burst, cold start) |
 | `scripts/benchmark-agent.mjs` | Agent workflow benchmark — with vs without cgraph |
 | `scripts/benchmark-compare.mjs` | Raw efficiency comparison (grep+read vs cgraph) |
 
