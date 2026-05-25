@@ -36,17 +36,22 @@ function matchParts(pat: string[], path: string[], pi: number, fi: number): bool
 export function lintArchitecture(db: GraphDB, rules: LintRule[]): LintResult {
   const violations: LintViolation[] = [];
 
+  // Bulk-load maps once for all rules
+  const fileMap = db.getFileMap();
+  const nodeMap = db.getNodeMap();
+  const { outgoing: callOut } = db.getAdjacencyMaps('calls');
+
   for (const rule of rules) {
     switch (rule.type) {
       case 'deny-dependency': {
         if (!rule.from || !rule.to) break;
         const allEdges = db.getAllEdges();
         for (const edge of allEdges) {
-          const src = db.getNode(edge.source_id);
-          const tgt = db.getNode(edge.target_id);
+          const src = nodeMap.get(edge.source_id);
+          const tgt = nodeMap.get(edge.target_id);
           if (!src || !tgt) continue;
-          const srcFile = db.getFileById(src.file_id)?.path ?? '';
-          const tgtFile = db.getFileById(tgt.file_id)?.path ?? '';
+          const srcFile = fileMap.get(src.file_id)?.path ?? '';
+          const tgtFile = fileMap.get(tgt.file_id)?.path ?? '';
           if (globMatch(rule.from, srcFile) && globMatch(rule.to, tgtFile)) {
             violations.push({
               rule,
@@ -63,16 +68,14 @@ export function lintArchitecture(db: GraphDB, rules: LintRule[]): LintResult {
         const max = rule.max ?? 10;
         const allNodes = db.getAllNodes();
         for (const node of allNodes) {
-          if (rule.scope) {
-            const fp = db.getFileById(node.file_id)?.path ?? '';
-            if (!globMatch(rule.scope, fp)) continue;
-          }
-          const fanOut = db.getEdgesFrom(node.id, 'calls').length;
+          const fp = fileMap.get(node.file_id)?.path ?? '';
+          if (rule.scope && !globMatch(rule.scope, fp)) continue;
+          const fanOut = (callOut.get(node.id) ?? []).length;
           if (fanOut > max) {
             violations.push({
               rule,
               symbol: node.name,
-              file: db.getFileById(node.file_id)?.path,
+              file: fp,
               detail: rule.message ?? `Fan-out ${fanOut} exceeds max ${max}`,
             });
           }

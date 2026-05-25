@@ -132,23 +132,27 @@ export function intentSearch(
   const N = allNodes.length;
   if (N === 0) return { results: [], total: 0, query_terms: queryTerms };
 
+  // Bulk-load maps to avoid N+1 queries
+  const fileMap = db.getFileMap();
+  const nodeMap = db.getNodeMap();
+  const { outgoing: callOut, incoming: callIn } = db.getAdjacencyMaps('calls');
+
   // Build document for each node
   const docs: { node: typeof allNodes[0]; tokens: string[]; filePath: string }[] = [];
   for (const node of allNodes) {
     if (opts.kind && node.kind !== opts.kind) continue;
-    const f = db.getFileById(node.file_id);
-    const fp = f?.path ?? '';
+    const fp = fileMap.get(node.file_id)?.path ?? '';
 
     // Build document from name + qualified_name + signature + doc + caller/callee names
     const parts = [node.name, node.qualified_name, node.signature ?? '', node.doc ?? ''];
-    const callers = db.getEdgesTo(node.id, 'calls').slice(0, 5);
+    const callers = (callIn.get(node.id) ?? []).slice(0, 5);
     for (const e of callers) {
-      const n = db.getNode(e.source_id);
+      const n = nodeMap.get(e.source_id);
       if (n) parts.push(n.name);
     }
-    const callees = db.getEdgesFrom(node.id, 'calls').slice(0, 5);
+    const callees = (callOut.get(node.id) ?? []).slice(0, 5);
     for (const e of callees) {
-      const n = db.getNode(e.target_id);
+      const n = nodeMap.get(e.target_id);
       if (n) parts.push(n.name);
     }
 

@@ -556,21 +556,24 @@ export function findCycles(
   const color = new Map<number, number>();
   const parent = new Map<number, number>();
 
-  // Build adjacency from specified edge kinds
+  // Build adjacency from specified edge kinds using bulk query
   const adj = new Map<number, number[]>();
-  for (const node of allNodes) {
-    const neighbors: number[] = [];
-    for (const kind of edgeKinds) {
-      for (const e of db.getEdgesFrom(node.id, kind)) {
-        neighbors.push(e.target_id);
-      }
+  for (const kind of edgeKinds) {
+    const { outgoing } = db.getAdjacencyMaps(kind);
+    for (const [nodeId, edges] of outgoing) {
+      const existing = adj.get(nodeId) ?? [];
+      for (const e of edges) existing.push(e.target_id);
+      adj.set(nodeId, existing);
     }
-    adj.set(node.id, neighbors);
+  }
+  for (const node of allNodes) {
+    if (!adj.has(node.id)) adj.set(node.id, []);
     color.set(node.id, WHITE);
   }
 
   // DFS cycle detection
   const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+  const fileMap = db.getFileMap();
 
   function dfs(u: number, stack: number[]): void {
     if (cycles.length >= maxCycles) return;
@@ -588,7 +591,7 @@ export function findCycles(
           const cycleFiles = [...new Set(cycleIds.map(id => {
             const n = nodeMap.get(id);
             if (!n) return '';
-            const f = db.getFileById(n.file_id);
+            const f = fileMap.get(n.file_id);
             return f?.path ?? '';
           }).filter(Boolean))];
 
@@ -643,18 +646,22 @@ export function getProjectStats(
   const allNodes = db.getAllNodes();
   const allFiles = db.getAllFiles();
 
+  // Bulk-load maps
+  const fileMap = db.getFileMap();
+  const nodeMap = db.getNodeMap();
+  const { outgoing: callOut, incoming: callIn } = db.getAdjacencyMaps('calls');
+
   let totalFanIn = 0, totalFanOut = 0;
   let maxIn = { symbol: '', file: '', count: 0 };
   let maxOut = { symbol: '', file: '', count: 0 };
   const nodeMetrics: { name: string; file: string; fanIn: number; fanOut: number }[] = [];
 
   for (const node of allNodes) {
-    const fanIn = db.getEdgesTo(node.id, 'calls').length;
-    const fanOut = db.getEdgesFrom(node.id, 'calls').length;
+    const fanIn = (callIn.get(node.id) ?? []).length;
+    const fanOut = (callOut.get(node.id) ?? []).length;
     totalFanIn += fanIn;
     totalFanOut += fanOut;
-    const f = db.getFileById(node.file_id);
-    const fp = f?.path ?? '';
+    const fp = fileMap.get(node.file_id)?.path ?? '';
 
     if (fanIn > maxIn.count) maxIn = { symbol: node.name, file: fp, count: fanIn };
     if (fanOut > maxOut.count) maxOut = { symbol: node.name, file: fp, count: fanOut };
@@ -667,7 +674,7 @@ export function getProjectStats(
     .sort((a, b) => b.coupling - a.coupling)
     .slice(0, limit);
 
-  // File-level coupling
+  // File-level coupling — using bulk maps
   const fileCoupling = new Map<string, { importsFrom: Set<string>; importedBy: Set<string> }>();
   for (const f of allFiles) {
     fileCoupling.set(f.path, { importsFrom: new Set(), importedBy: new Set() });
@@ -675,11 +682,11 @@ export function getProjectStats(
   const allEdges = db.getAllEdges();
   for (const e of allEdges) {
     if (e.kind !== 'imports') continue;
-    const srcNode = db.getNode(e.source_id);
-    const tgtNode = db.getNode(e.target_id);
+    const srcNode = nodeMap.get(e.source_id);
+    const tgtNode = nodeMap.get(e.target_id);
     if (!srcNode || !tgtNode) continue;
-    const srcFile = db.getFileById(srcNode.file_id);
-    const tgtFile = db.getFileById(tgtNode.file_id);
+    const srcFile = fileMap.get(srcNode.file_id);
+    const tgtFile = fileMap.get(tgtNode.file_id);
     if (!srcFile || !tgtFile || srcFile.path === tgtFile.path) continue;
     fileCoupling.get(srcFile.path)?.importsFrom.add(tgtFile.path);
     fileCoupling.get(tgtFile.path)?.importedBy.add(srcFile.path);
@@ -754,13 +761,17 @@ export function suggestRefactorings(
     else return { suggestions: [], total: 0 };
   }
 
+  // Bulk-load maps
+  const fileMap = db.getFileMap();
+  const nodeMap = db.getNodeMap();
+  const { outgoing: callOut, incoming: callIn } = db.getAdjacencyMaps('calls');
+
   for (const node of allNodes) {
     if (suggestions.length >= limit * 3) break; // over-collect for dedup
 
-    const f = db.getFileById(node.file_id);
-    const fp = f?.path ?? '';
-    const fanIn = db.getEdgesTo(node.id, 'calls').length;
-    const fanOut = db.getEdgesFrom(node.id, 'calls').length;
+    const fp = fileMap.get(node.file_id)?.path ?? '';
+    const fanIn = (callIn.get(node.id) ?? []).length;
+    const fanOut = (callOut.get(node.id) ?? []).length;
     const bodyLines = (node.end_line ?? node.start_line) - node.start_line + 1;
 
     // 1. Extract method: long functions with high fan-out
@@ -789,9 +800,9 @@ export function suggestRefactorings(
 
     // 3. Move candidate: symbol used more by other files than its own
     if (fanIn >= 2) {
-      const callers = db.getEdgesTo(node.id, 'calls');
+      const callers = callIn.get(node.id) ?? [];
       const sameFile = callers.filter(e => {
-        const src = db.getNode(e.source_id);
+        const src = nodeMap.get(e.source_id);
         return src && src.file_id === node.file_id;
       }).length;
       const otherFile = callers.length - sameFile;
@@ -799,9 +810,9 @@ export function suggestRefactorings(
       if (otherFile > sameFile && otherFile >= 2) {
         const extCallerFiles = new Map<string, number>();
         for (const e of callers) {
-          const src = db.getNode(e.source_id);
+          const src = nodeMap.get(e.source_id);
           if (src && src.file_id !== node.file_id) {
-            const sf = db.getFileById(src.file_id);
+            const sf = fileMap.get(src.file_id);
             if (sf) extCallerFiles.set(sf.path, (extCallerFiles.get(sf.path) || 0) + 1);
           }
         }
@@ -873,6 +884,12 @@ export function getAutoContext(db: GraphDB, filePath: string): AutoContextResult
   const testRe = /\.(test|spec|e2e)\.(ts|tsx|js|jsx|py)$|__tests?__\//i;
   const allFiles = db.getAllFiles();
 
+  // Bulk-load maps to avoid N+1 queries
+  const fileMap = db.getFileMap();
+  const nodeMap = db.getNodeMap();
+  const { outgoing: callOut, incoming: callIn } = db.getAdjacencyMaps('calls');
+  const { outgoing: impOut, incoming: impIn } = db.getAdjacencyMaps('imports');
+
   // Build symbols with top callers/callees
   const symbols: AutoContextSymbol[] = [];
   const roles: Record<string, number> = {};
@@ -882,17 +899,17 @@ export function getAutoContext(db: GraphDB, filePath: string): AutoContextResult
     if (node.exported) exported++;
     if (node.role) roles[node.role] = (roles[node.role] || 0) + 1;
 
-    const callersRaw = db.getEdgesTo(node.id, 'calls');
-    const calleesRaw = db.getEdgesFrom(node.id, 'calls');
+    const callersRaw = (callIn.get(node.id) ?? []).slice(0, 5);
+    const calleesRaw = (callOut.get(node.id) ?? []).slice(0, 5);
 
-    const callers = callersRaw.slice(0, 5).map(e => {
-      const n = db.getNode(e.source_id);
-      const f = n ? db.getFileById(n.file_id) : undefined;
+    const callers = callersRaw.map(e => {
+      const n = nodeMap.get(e.source_id);
+      const f = n ? fileMap.get(n.file_id) : undefined;
       return { name: n?.name ?? '?', file: f?.path ?? '' };
     });
-    const callees = calleesRaw.slice(0, 5).map(e => {
-      const n = db.getNode(e.target_id);
-      const f = n ? db.getFileById(n.file_id) : undefined;
+    const callees = calleesRaw.map(e => {
+      const n = nodeMap.get(e.target_id);
+      const f = n ? fileMap.get(n.file_id) : undefined;
       return { name: n?.name ?? '?', file: f?.path ?? '' };
     });
 
@@ -913,17 +930,17 @@ export function getAutoContext(db: GraphDB, filePath: string): AutoContextResult
     .filter(f => testRe.test(f.path) && f.path.includes(baseName))
     .map(f => f.path);
 
-  // File-level imports_from / imported_by
+  // File-level imports_from / imported_by (using bulk maps)
   const importsFrom = new Set<string>();
   const importedBy = new Set<string>();
   for (const node of nodes) {
-    for (const e of db.getEdgesFrom(node.id, 'imports')) {
-      const t = db.getNode(e.target_id);
-      if (t) { const f = db.getFileById(t.file_id); if (f && f.id !== file.id) importsFrom.add(f.path); }
+    for (const e of (impOut.get(node.id) ?? [])) {
+      const t = nodeMap.get(e.target_id);
+      if (t) { const f = fileMap.get(t.file_id); if (f && f.id !== file.id) importsFrom.add(f.path); }
     }
-    for (const e of db.getEdgesTo(node.id, 'imports')) {
-      const s = db.getNode(e.source_id);
-      if (s) { const f = db.getFileById(s.file_id); if (f && f.id !== file.id) importedBy.add(f.path); }
+    for (const e of (impIn.get(node.id) ?? [])) {
+      const s = nodeMap.get(e.source_id);
+      if (s) { const f = fileMap.get(s.file_id); if (f && f.id !== file.id) importedBy.add(f.path); }
     }
   }
 
@@ -1020,6 +1037,10 @@ export function getCodebaseDNA(db: GraphDB): CodebaseDNA {
   const allNodes = db.getAllNodes();
   const allEdges = db.getAllEdges();
 
+  // Bulk-load maps (3 queries instead of hundreds)
+  const fileMap = db.getFileMap();
+  const { outgoing: callOut, incoming: callIn } = db.getAdjacencyMaps('calls');
+
   // Language distribution
   const langCounts = new Map<string, number>();
   for (const f of allFiles) langCounts.set(f.language, (langCounts.get(f.language) || 0) + 1);
@@ -1057,14 +1078,14 @@ export function getCodebaseDNA(db: GraphDB): CodebaseDNA {
     roleDist[r] = (roleDist[r] || 0) + 1;
   }
 
-  // Health scores (0-100)
+  // Health scores (0-100) — using bulk maps instead of per-node queries
   const cycleResult = findCycles(db, { maxCycles: 50 });
   const deadCount = allNodes.filter(n => n.role === 'dead').length;
   const testRe = /\.(test|spec|e2e)\.(ts|tsx|js|jsx|py)$|__tests?__\//i;
   const testFiles = allFiles.filter(f => testRe.test(f.path)).length;
   const sourceFiles = allFiles.length - testFiles;
   const godCount = allNodes.filter(n => {
-    return db.getEdgesFrom(n.id, 'calls').length >= 10;
+    return (callOut.get(n.id) ?? []).length >= 10;
   }).length;
 
   const modularity = Math.max(0, Math.min(100, 100 - cycleResult.total * 10));
@@ -1073,13 +1094,13 @@ export function getCodebaseDNA(db: GraphDB): CodebaseDNA {
   const complexity = allNodes.length > 0 ? Math.max(0, Math.min(100, 100 - Math.round(godCount / allNodes.length * 1000))) : 100;
   const overall = Math.round((modularity + dead_code + test_coverage + complexity) / 4);
 
-  // Key hubs
+  // Key hubs — using bulk maps
   const key_hubs = allNodes
     .map(n => ({
       name: n.name,
-      file: db.getFileById(n.file_id)?.path ?? '',
-      fan_in: db.getEdgesTo(n.id, 'calls').length,
-      fan_out: db.getEdgesFrom(n.id, 'calls').length,
+      file: fileMap.get(n.file_id)?.path ?? '',
+      fan_in: (callIn.get(n.id) ?? []).length,
+      fan_out: (callOut.get(n.id) ?? []).length,
     }))
     .filter(h => h.fan_in >= 3 || h.fan_out >= 5)
     .sort((a, b) => (b.fan_in + b.fan_out) - (a.fan_in + a.fan_out))

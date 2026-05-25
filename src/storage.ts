@@ -344,6 +344,40 @@ export class GraphDB {
     return this.all('SELECT * FROM edges');
   }
 
+  // -- batch helpers (avoid N+1 queries) ----------------------------
+
+  /** Build a Map<fileId, FileRecord> for O(1) file lookups. */
+  getFileMap(): Map<number, FileRecord> {
+    const files = this.getAllFiles();
+    return new Map(files.map(f => [f.id, f]));
+  }
+
+  /** Build a Map<nodeId, NodeRecord> for O(1) node lookups. */
+  getNodeMap(): Map<number, NodeRecord> {
+    const nodes = this.getAllNodes();
+    return new Map(nodes.map(n => [n.id, n]));
+  }
+
+  /** Build adjacency lists from all edges in two bulk queries.
+   *  Returns { outgoing: Map<sourceId, EdgeRecord[]>, incoming: Map<targetId, EdgeRecord[]> }
+   */
+  getAdjacencyMaps(kind?: string): { outgoing: Map<number, EdgeRecord[]>; incoming: Map<number, EdgeRecord[]> } {
+    const edges = kind
+      ? this.all('SELECT * FROM edges WHERE kind = ?', [kind])
+      : this.getAllEdges();
+    const outgoing = new Map<number, EdgeRecord[]>();
+    const incoming = new Map<number, EdgeRecord[]>();
+    for (const e of edges) {
+      let out = outgoing.get(e.source_id);
+      if (!out) { out = []; outgoing.set(e.source_id, out); }
+      out.push(e);
+      let inc = incoming.get(e.target_id);
+      if (!inc) { inc = []; incoming.set(e.target_id, inc); }
+      inc.push(e);
+    }
+    return { outgoing, incoming };
+  }
+
   // -- keyword search (LIKE-based, ranked) ----------------------------
   ftsSearch(query: string, limit = 20): SearchResult[] {
     const terms = query.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0);
