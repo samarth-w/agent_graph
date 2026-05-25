@@ -67,7 +67,7 @@ One-command installer. Auto-indexes on first Copilot query. No config per projec
 ### 🛠️ 17 MCP Tools
 search · context · trace · explore · node · callers · callees · impact · files · status · affected · export · changed · deadcode · cycles · stats · suggest
 
-### ⚡ 5.1x Faster Workflows
+### ⚡ Dramatically Faster Workflows
 Collapses multi-step grep→read chains into single precomputed graph queries.
 
 </td>
