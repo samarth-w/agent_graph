@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "cgraph": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": ["${workspaceFolder}/bin/cgraph.js", "serve", "--mcp"],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
