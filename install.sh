@@ -4,7 +4,7 @@
 # No prerequisites needed (installs Node.js if missing).
 #
 # Usage:
-# curl -fsSL https://raw.githubusercontent.com/samarth-w/agent_graph/master/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/samarth-w/agent_graph/main/install.sh | bash
 #
 #   # Or with options:
 #   INSTALL_DIR=~/tools/cgraph bash install.sh
@@ -97,7 +97,7 @@ elif command -v git >/dev/null 2>&1; then
     git clone "$REPO_URL" "$CGRAPH_DIR"
 else
     echo "   Downloading as zip (no git needed)..."
-    ZIP_URL="${REPO_URL%.git}/archive/refs/heads/master.zip"
+    ZIP_URL="${REPO_URL%.git}/archive/refs/heads/main.zip"
     mkdir -p "$CGRAPH_DIR"
     TMPZIP=$(mktemp)
     curl -fsSL "$ZIP_URL" -o "$TMPZIP"

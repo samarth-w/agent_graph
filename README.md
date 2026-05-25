@@ -9,7 +9,7 @@ Local-first code graph CLI that gives GitHub Copilot (and other AI agents) insta
 - **Install and forget** — one-command installer configures everything, auto-indexes on first Copilot query
 - **13 MCP tools** — search, context, trace, explore, node, callers, callees, impact, files, status, affected, export, changed
 - **5.1x faster agent workflows** — collapses multi-step grep→read chains into single precomputed queries ([benchmarks](#benchmarks))
-- **Multi-language** — TypeScript, JavaScript, JSX, TSX, Python
+- **Multi-language** — TypeScript, JavaScript, JSX, TSX, Python, C, C++, Shell/Bash, PowerShell
 - **Framework-aware** — Express, React Router, Next.js, Flask, FastAPI, Django route extraction
 - **Dynamic dispatch** — synthesizes edges for callbacks, event emitters, HOFs, promise chains
 - **Test impact** — `cgraph affected` finds which test files are impacted by your changes
@@ -201,14 +201,14 @@ cgraph/
 │   ├── cache.ts               # LRU cache for MCP tool results
 │   ├── export.ts              # Mermaid / DOT diagram generation
 │   ├── git.ts                 # Git diff → changed symbol mapping
-│   ├── parser.ts              # Code parser (babel for JS/TS, regex for Python)
+│   ├── parser.ts              # Code parser (babel for JS/TS, regex for Python/C/C++/Shell/PS1)
 │   ├── query-parser.ts        # Search query field extraction
 │   ├── search.ts              # Symbol search with filtering
 │   ├── storage.ts             # GraphDB (sql.js SQLite)
 │   ├── synthesizer.ts         # Dynamic dispatch edge synthesis
 │   ├── types.ts               # All type definitions
 │   └── watcher.ts             # File watcher with debounced re-index
-├── __tests__/                 # Test suite (vitest, 105 tests)
+├── __tests__/                 # Test suite (vitest, 131 tests)
 │   └── ...
 ├── scripts/
 │   ├── benchmark.mjs          # MCP server latency benchmark
@@ -218,7 +218,8 @@ cgraph/
 │   ├── setup-mcp.ps1          # Auto-configure .vscode/mcp.json
 │   └── smoke-test.ps1/.sh     # 19 end-to-end CLI tests
 ├── demo/
-│   └── finance/               # Personal finance tracker demo (16 files, 168 symbols)
+│   ├── finance/               # Personal finance tracker demo (16 files, 168 symbols)
+│   └── cpp-shell/             # C++/Shell demo with edge cases (3 files, 59 symbols)
 ├── python_test/               # Python test project (Flask app, 6 files)
 ├── install.ps1                # Windows standalone installer
 ├── install.sh                 # macOS/Linux standalone installer
@@ -235,7 +236,7 @@ npm run build
 # Watch mode (rebuild on save)
 npm run dev
 
-# Run tests (105 unit tests)
+# Run tests (131 unit tests)
 npm test
 
 # Watch tests
@@ -274,7 +275,10 @@ bash scripts/smoke-test.sh
 ### Supported Languages
 
 - JavaScript / TypeScript / JSX / TSX (via `@babel/parser`)
-- Python (regex-based, covers functions, classes, methods, imports)
+- Python (regex-based — functions, classes, methods, imports)
+- C / C++ (regex-based — functions, structs, classes, enums, namespaces, typedefs, `#include`)
+- Shell / Bash / Zsh (regex-based — functions, aliases, `source`/`.` imports, command calls)
+- PowerShell (regex-based — functions, filters, classes, enums, `Import-Module`, dot-sourcing)
 
 ### Database
 
