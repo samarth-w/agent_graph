@@ -15,10 +15,38 @@ Local-first code graph CLI that gives GitHub Copilot (and other AI agents) insta
 
 ## Quick Start
 
+### Option A: One-command install (no Node/git required)
+
+For system programmers and devs who don't have Node.js or git — the installer handles everything:
+
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+**macOS / Linux:**
+```bash
+# After repo is hosted, this will work as a one-liner:
+# curl -fsSL https://raw.githubusercontent.com/YOUR-ORG/cgraph/master/install.sh | bash
+
+# For now, from a shared copy:
+bash install.sh
+```
+
+This will:
+1. Download a portable Node.js (if you don't have one)
+2. Fetch cgraph source
+3. Build it
+4. Add `cgraph` to your PATH
+
+**That's it.** No npm, no git, no Node.js knowledge needed.
+
+### Option B: Install from source (if you have Node.js)
+
 ### Prerequisites
 
 - Node.js >= 18.0.0
-- npm or yarn
+- npm
 
 ### Install from Source
 
@@ -72,6 +100,7 @@ Restart VS Code. The 11 cgraph tools will appear in Copilot Chat automatically.
 
 ### Teammate Setup (Quick Version)
 
+**If they have Node.js:**
 ```bash
 git clone <your-repo-url>
 cd cgraph
@@ -81,6 +110,12 @@ npm link          # makes `cgraph` available globally
 cd ../your-project
 cgraph index      # index the target project
 ```
+
+**If they DON'T have Node.js (system programmers, etc.):**
+1. Share the repo folder (zip, USB, network drive — whatever works)
+2. They run: `powershell -ExecutionPolicy Bypass -File install.ps1` (Windows)
+   or `bash install.sh` (macOS/Linux)
+3. Done — `cgraph` is on their PATH
 
 Then add the `.vscode/mcp.json` above to the target project. Done.
 
@@ -171,12 +206,27 @@ npm run build
 # Watch mode (rebuild on save)
 npm run dev
 
-# Run tests
+# Run tests (105 unit tests)
 npm test
 
 # Watch tests
 npm run test:watch
+
+# Smoke test all CLI commands end-to-end
+# Windows:
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test.ps1
+# macOS/Linux:
+bash scripts/smoke-test.sh
 ```
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `install.ps1` / `install.sh` | Standalone installer (downloads Node if needed) |
+| `scripts/local-install.ps1` / `.sh` | Build + npm link for dev testing |
+| `scripts/smoke-test.ps1` / `.sh` | 19 end-to-end CLI tests |
+| `scripts/setup-mcp.ps1` | Auto-configure `.vscode/mcp.json` for a project |
 
 ## Architecture
 
