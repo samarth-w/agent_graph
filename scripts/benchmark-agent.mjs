@@ -79,330 +79,373 @@ class AgentReplay {
 // Scenario definitions — each one is a real developer question
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+// Auto-detect symbols from target project for portable scenarios
+// ═══════════════════════════════════════════════════════════════════
+
+function detectSymbols(files) {
+  const classes = [], functions = [], methods = [];
+  const funcRe = /(?:export\s+)?(?:function|async\s+function)\s+(\w+)/g;
+  const classRe = /(?:export\s+)?class\s+(\w+)/g;
+  const methodRe = /^\s+(\w+)\s*\([^)]*\)\s*(?::\s*\S+)?\s*\{/gm;
+
+  for (const f of files) {
+    const c = readFileSync(f, 'utf-8');
+    for (const m of c.matchAll(funcRe)) functions.push({ name: m[1], file: f });
+    for (const m of c.matchAll(classRe)) classes.push({ name: m[1], file: f });
+    for (const m of c.matchAll(methodRe)) {
+      if (!['if','for','while','switch','catch','constructor'].includes(m[1]))
+        methods.push({ name: m[1], file: f });
+    }
+  }
+  // Pick symbols with most callers/usage for interesting benchmarks
+  const freq = {};
+  for (const f of files) {
+    const c = readFileSync(f, 'utf-8');
+    for (const fn of [...functions, ...methods]) {
+      if (c.includes(fn.name + '(')) freq[fn.name] = (freq[fn.name] || 0) + 1;
+    }
+  }
+  const sorted = Object.entries(freq).sort((a,b) => b[1] - a[1]);
+  const topFn = sorted.find(([n]) => functions.some(f => f.name === n));
+  const topMethod = sorted.find(([n]) => methods.some(m => m.name === n) && !functions.some(f => f.name === n));
+
+  // Find an entry point (main, app, index, handle)
+  const entry = functions.find(f => ['main','handle','app','run','start','createApp','startGame'].includes(f.name))
+    || functions[0];
+
+  // Find a utility function (deeply called)
+  const utilFn = topFn ? functions.find(f => f.name === topFn[0]) || functions[0] : functions[0];
+
+  // Find a class
+  const mainClass = classes.length > 0 ? classes[0] : null;
+
+  // Find a file that lots of things depend on (types, utils, models)
+  const utilFile = files.find(f => /\b(types|utils|validation|helpers|common|models)\b/.test(f)) || files[0];
+
+  // Find a leaf utility function (small, many callers)
+  const leafUtil = sorted.length > 2
+    ? functions.find(f => f.name === sorted[Math.min(2, sorted.length - 1)][0]) || utilFn
+    : utilFn;
+
+  return { entry, utilFn, leafUtil, mainClass, utilFile, classes, functions, methods };
+}
+
 const scenarios = [];
 
-// ── Scenario 1: "Where is parseFile defined and who calls it?" ────
-scenarios.push({
-  question: 'Where is parseFile defined and who calls it?',
-  without(files) {
-    const r = new AgentReplay(this.question);
+function buildScenarios(files) {
+  const sym = detectSymbols(files);
 
-    // Step 1: Agent greps for the definition
-    const t0 = performance.now();
-    let defFile = null, defLine = 0, defBytes = 0;
-    for (const f of files) {
-      const c = readFileSync(f, 'utf-8');
-      const m = c.match(/(?:export\s+)?(?:function|async\s+function)\s+parseFile\b/);
-      if (m) { defFile = f; defLine = c.slice(0, m.index).split('\n').length; defBytes = c.length; break; }
-    }
-    r.step('grep_search', `"function parseFile" → found ${rel(defFile)}`, performance.now() - t0,
-           files.reduce((s,f) => s + f.length, 0) < 100 ? 512 : 512); // grep returns ~0.5KB snippet
+  const entryName = sym.entry?.name || 'main';
+  const utilName = sym.utilFn?.name || 'helper';
+  const leafName = sym.leafUtil?.name || utilName;
+  const className = sym.mainClass?.name || 'Service';
+  const utilFileRel = rel(sym.utilFile);
 
-    // Step 2: Agent reads the definition file
-    const t1 = performance.now();
-    const content = readFileSync(defFile, 'utf-8');
-    r.step('read_file', `${rel(defFile)} (lines ${defLine}-${defLine+40})`, performance.now() - t1, Math.min(content.length, 3000));
+  // ── Scenario 1: "Where is X defined and who calls it?" ────
+  scenarios.push({
+    question: `Where is ${leafName} defined and who calls it?`,
+    without(files) {
+      const r = new AgentReplay(this.question);
+      const searchName = leafName;
 
-    // Step 3: Agent greps for usages
-    const t2 = performance.now();
-    const callerFiles = [];
-    for (const f of files) {
-      const c = readFileSync(f, 'utf-8');
-      if (c.includes('parseFile(') && f !== defFile) callerFiles.push(f);
-    }
-    r.step('grep_search', `"parseFile(" → ${callerFiles.length} files`, performance.now() - t2, 512 * callerFiles.length);
-
-    // Step 4+: Agent reads each caller file for context
-    for (const cf of callerFiles) {
-      const t = performance.now();
-      const c = readFileSync(cf, 'utf-8');
-      const lines = c.split('\n');
-      let snippet = '';
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes('parseFile(')) {
-          snippet = lines.slice(Math.max(0,i-3), i+4).join('\n');
-          break;
-        }
+      // Step 1: Agent greps for the definition
+      const t0 = performance.now();
+      let defFile = null;
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        const re = new RegExp(`(?:export\\s+)?(?:function|async\\s+function)\\s+${searchName}\\b`);
+        if (re.test(c)) { defFile = f; break; }
       }
-      r.step('read_file', `${rel(cf)} (context around call)`, performance.now() - t, snippet.length || 2000);
-    }
+      if (!defFile) defFile = files[0];
+      r.step('grep_search', `"function ${searchName}" → found ${rel(defFile)}`, performance.now() - t0, 512);
 
-    return r;
-  },
-  withCgraph() {
-    const r = new AgentReplay(this.question);
-    // Single call: cgraph_callers parseFile
-    const res = cgraph('callers', ['parseFile']);
-    r.step('cgraph_callers', `"parseFile" → full caller tree`, res.elapsed, res.bytes);
-    return r;
-  }
-});
+      // Step 2: Agent reads the definition file
+      const t1 = performance.now();
+      const content = readFileSync(defFile, 'utf-8');
+      r.step('read_file', `${rel(defFile)} (read definition)`, performance.now() - t1, Math.min(content.length, 3000));
 
-// ── Scenario 2: "What's the impact of changing GraphDB.open?" ─────
-scenarios.push({
-  question: "What's the impact of changing GraphDB.open?",
-  without(files) {
-    const r = new AgentReplay(this.question);
-
-    // Step 1: Find definition of 'open'
-    const t0 = performance.now();
-    let defFile = null;
-    for (const f of files) {
-      const c = readFileSync(f, 'utf-8');
-      if (/(?:async\s+)?open\s*\(/.test(c) && c.includes('class GraphDB')) { defFile = f; break; }
-    }
-    r.step('grep_search', `"class GraphDB" + "open(" → ${rel(defFile)}`, performance.now() - t0, 600);
-
-    // Step 2: Read the class to understand the method
-    const t1 = performance.now();
-    const content = readFileSync(defFile, 'utf-8');
-    r.step('read_file', `${rel(defFile)} (full class, 300+ lines)`, performance.now() - t1, content.length);
-
-    // Step 3: Find direct callers of .open(
-    const t2 = performance.now();
-    const callers = [];
-    for (const f of files) {
-      const c = readFileSync(f, 'utf-8');
-      if (c.includes('.open(') && f !== defFile) callers.push(f);
-    }
-    r.step('grep_search', `".open(" → ${callers.length} files`, performance.now() - t2, 512);
-
-    // Step 4: Read each caller file
-    for (const cf of callers) {
-      const t = performance.now();
-      const c = readFileSync(cf, 'utf-8');
-      r.step('read_file', `${rel(cf)}`, performance.now() - t, Math.min(c.length, 4000));
-    }
-
-    // Step 5: For each caller function, find THEIR callers (transitive impact)
-    const t3 = performance.now();
-    const secondOrder = new Set();
-    for (const cf of callers) {
-      const c = readFileSync(cf, 'utf-8');
-      // Extract function names from the file
-      const funcNames = [...c.matchAll(/(?:export\s+)?(?:function|async\s+function)\s+(\w+)/g)].map(m => m[1]);
-      for (const fn of funcNames) {
-        for (const f of files) {
-          const fc = readFileSync(f, 'utf-8');
-          if (fc.includes(fn + '(')) secondOrder.add(rel(f));
-        }
+      // Step 3: Agent greps for usages
+      const t2 = performance.now();
+      const callerFiles = [];
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        if (c.includes(searchName + '(') && f !== defFile) callerFiles.push(f);
       }
-    }
-    r.step('grep_search', `transitive callers (depth 2) → ${secondOrder.size} files`, performance.now() - t3, 512 * secondOrder.size);
+      r.step('grep_search', `"${searchName}(" → ${callerFiles.length} files`, performance.now() - t2, 512 * callerFiles.length);
 
-    // Step 6: Agent tries to summarize — reads key files again
-    for (const sf of [...secondOrder].slice(0, 3)) {
-      const t = performance.now();
-      const c = readFileSync(resolve(TARGET, sf), 'utf-8');
-      r.step('read_file', `${sf} (verify impact)`, performance.now() - t, Math.min(c.length, 3000));
-    }
-
-    return r;
-  },
-  withCgraph() {
-    const r = new AgentReplay(this.question);
-    const res = cgraph('impact', ['open']);
-    r.step('cgraph_impact', `"open" → full impact tree`, res.elapsed, res.bytes);
-    return r;
-  }
-});
-
-// ── Scenario 3: "Show me the call chain from CLI to the database" ─
-scenarios.push({
-  question: 'How does the CLI command reach the database layer?',
-  without(files) {
-    const r = new AgentReplay(this.question);
-
-    // Step 1: Find CLI entry point
-    const t0 = performance.now();
-    let cliFile = null;
-    for (const f of files) {
-      if (f.includes('cli')) { cliFile = f; break; }
-    }
-    r.step('file_search', `"*cli*" → ${rel(cliFile)}`, performance.now() - t0, 256);
-
-    // Step 2: Read CLI file
-    const t1 = performance.now();
-    const cliContent = readFileSync(cliFile, 'utf-8');
-    r.step('read_file', `${rel(cliFile)} (full file)`, performance.now() - t1, cliContent.length);
-
-    // Step 3: Find what CLI calls → identify indexProject, search, etc.
-    const t2 = performance.now();
-    const imports = [...cliContent.matchAll(/import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"]/g)];
-    const importedFns = imports.flatMap(m => m[1].split(',').map(s => s.trim()));
-    r.step('semantic_search', `CLI imports: ${importedFns.slice(0,5).join(', ')}…`, performance.now() - t2, 512);
-
-    // Step 4-6: Read each imported module to trace the chain
-    for (const imp of imports.slice(0, 3)) {
-      const modName = imp[2].replace('./', '').replace('.js', '');
-      const modFile = files.find(f => f.includes(modName));
-      if (modFile) {
+      // Step 4+: Agent reads each caller file for context
+      for (const cf of callerFiles) {
         const t = performance.now();
-        const c = readFileSync(modFile, 'utf-8');
-        r.step('read_file', `${rel(modFile)} (trace chain)`, performance.now() - t, c.length);
+        const c = readFileSync(cf, 'utf-8');
+        const lines = c.split('\n');
+        let snippet = '';
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes(searchName + '(')) {
+            snippet = lines.slice(Math.max(0,i-3), i+4).join('\n');
+            break;
+          }
+        }
+        r.step('read_file', `${rel(cf)} (context around call)`, performance.now() - t, snippet.length || 2000);
       }
-    }
 
-    // Step 7: Find storage/db layer
-    const t3 = performance.now();
-    let storageFile = files.find(f => f.includes('storage'));
-    if (storageFile) {
-      const c = readFileSync(storageFile, 'utf-8');
-      r.step('read_file', `${rel(storageFile)} (DB layer)`, performance.now() - t3, c.length);
+      return r;
+    },
+    withCgraph() {
+      const r = new AgentReplay(this.question);
+      const res = cgraph('callers', [leafName]);
+      r.step('cgraph_callers', `"${leafName}" → full caller tree`, res.elapsed, res.bytes);
+      return r;
     }
+  });
 
-    // Step 8: Agent needs to grep for the connecting calls
-    const t4 = performance.now();
-    for (const f of files) {
-      const c = readFileSync(f, 'utf-8');
-      if (c.includes('GraphDB') || c.includes('.open(') || c.includes('.save(')) {
-        // just scanning
+  // ── Scenario 2: "What's the impact of changing class X?" ─────
+  scenarios.push({
+    question: `What's the impact of changing ${className}?`,
+    without(files) {
+      const r = new AgentReplay(this.question);
+
+      // Step 1: Find the class definition
+      const t0 = performance.now();
+      let defFile = null;
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        if (c.includes(`class ${className}`)) { defFile = f; break; }
       }
+      if (!defFile) defFile = files[0];
+      r.step('grep_search', `"class ${className}" → ${rel(defFile)}`, performance.now() - t0, 600);
+
+      // Step 2: Read the class
+      const t1 = performance.now();
+      const content = readFileSync(defFile, 'utf-8');
+      r.step('read_file', `${rel(defFile)} (full class)`, performance.now() - t1, content.length);
+
+      // Step 3: Find direct usages
+      const t2 = performance.now();
+      const usageFiles = [];
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        if (c.includes(className) && f !== defFile) usageFiles.push(f);
+      }
+      r.step('grep_search', `"${className}" → ${usageFiles.length} files`, performance.now() - t2, 512);
+
+      // Step 4: Read each usage file
+      for (const uf of usageFiles) {
+        const t = performance.now();
+        const c = readFileSync(uf, 'utf-8');
+        r.step('read_file', `${rel(uf)}`, performance.now() - t, Math.min(c.length, 4000));
+      }
+
+      // Step 5: Transitive callers (depth 2)
+      const t3 = performance.now();
+      const secondOrder = new Set();
+      for (const uf of usageFiles) {
+        const c = readFileSync(uf, 'utf-8');
+        const funcNames = [...c.matchAll(/(?:export\s+)?(?:function|async\s+function)\s+(\w+)/g)].map(m => m[1]);
+        for (const fn of funcNames) {
+          for (const f of files) {
+            const fc = readFileSync(f, 'utf-8');
+            if (fc.includes(fn + '(')) secondOrder.add(rel(f));
+          }
+        }
+      }
+      r.step('grep_search', `transitive callers (depth 2) → ${secondOrder.size} files`, performance.now() - t3, 512 * secondOrder.size);
+
+      // Step 6: Verify a few
+      for (const sf of [...secondOrder].slice(0, 3)) {
+        const t = performance.now();
+        const c = readFileSync(resolve(TARGET, sf), 'utf-8');
+        r.step('read_file', `${sf} (verify impact)`, performance.now() - t, Math.min(c.length, 3000));
+      }
+
+      return r;
+    },
+    withCgraph() {
+      const r = new AgentReplay(this.question);
+      const res = cgraph('impact', [className]);
+      r.step('cgraph_impact', `"${className}" → full impact tree`, res.elapsed, res.bytes);
+      return r;
     }
-    r.step('grep_search', `"GraphDB|.open|.save" across all files`, performance.now() - t4, 1024);
+  });
 
-    return r;
-  },
-  withCgraph() {
-    const r = new AgentReplay(this.question);
+  // ── Scenario 3: "Trace the call chain from entry to utility" ─
+  scenarios.push({
+    question: `How does ${entryName} reach ${utilName}?`,
+    without(files) {
+      const r = new AgentReplay(this.question);
 
-    // Agent knows CLI entry point function, traces to DB
-    const res1 = cgraph('trace', ['runCli', 'open']);
-    r.step('cgraph_trace', `"runCli" → "open" path`, res1.elapsed, res1.bytes);
+      // Step 1: Find entry point
+      const t0 = performance.now();
+      let entryFile = null;
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        if (c.includes(`function ${entryName}`) || c.includes(`${entryName}(`)) { entryFile = f; break; }
+      }
+      if (!entryFile) entryFile = files[0];
+      r.step('file_search', `"${entryName}" → ${rel(entryFile)}`, performance.now() - t0, 256);
 
-    return r;
-  }
-});
+      // Step 2: Read entry file
+      const t1 = performance.now();
+      const entryContent = readFileSync(entryFile, 'utf-8');
+      r.step('read_file', `${rel(entryFile)} (full file)`, performance.now() - t1, entryContent.length);
 
-// ── Scenario 4: "I changed utils.ts — what tests should I run?" ───
-scenarios.push({
-  question: 'I changed src/config.ts — what tests should I run?',
-  without(files) {
-    const r = new AgentReplay(this.question);
+      // Step 3: Extract imports to follow chain
+      const t2 = performance.now();
+      const imports = [...entryContent.matchAll(/import\s+{([^}]+)}\s+from\s+['"]([^'"]+)['"]/g)];
+      r.step('semantic_search', `${entryName} imports: ${imports.length} modules`, performance.now() - t2, 512);
 
-    // Step 1: Read the changed file
-    const t0 = performance.now();
-    const cfgFile = files.find(f => f.includes('config.'));
-    const cfgContent = cfgFile ? readFileSync(cfgFile, 'utf-8') : '';
-    r.step('read_file', `${rel(cfgFile)} (understand changes)`, performance.now() - t0, cfgContent.length);
+      // Step 4-6: Read imported modules to trace
+      for (const imp of imports.slice(0, 4)) {
+        const modName = imp[2].replace(/^\.\//, '').replace(/\.js$/, '');
+        const modFile = files.find(f => f.includes(modName));
+        if (modFile) {
+          const t = performance.now();
+          const c = readFileSync(modFile, 'utf-8');
+          r.step('read_file', `${rel(modFile)} (trace chain)`, performance.now() - t, c.length);
+        }
+      }
 
-    // Step 2: Extract exported symbols
-    const t1 = performance.now();
-    const exports = [...cfgContent.matchAll(/export\s+(?:function|const|class|interface|type)\s+(\w+)/g)].map(m => m[1]);
-    r.step('grep_search', `exported symbols: ${exports.slice(0,5).join(', ')}`, performance.now() - t1, 512);
+      // Step 7: Grep for target utility
+      const t3 = performance.now();
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        if (c.includes(utilName)) {
+          // scanning
+        }
+      }
+      r.step('grep_search', `"${utilName}" across all files`, performance.now() - t3, 1024);
 
-    // Step 3: For each export, grep who imports it
-    const allFiles = walkFiles(TARGET, ['.ts','.js','.py','.tsx','.jsx','.test.ts']);
-    const testFiles = [];
-    for (const exp of exports) {
-      const t = performance.now();
+      return r;
+    },
+    withCgraph() {
+      const r = new AgentReplay(this.question);
+      const res = cgraph('trace', [entryName, utilName]);
+      r.step('cgraph_trace', `"${entryName}" → "${utilName}" path`, res.elapsed, res.bytes);
+      return r;
+    }
+  });
+
+  // ── Scenario 4: "I changed X — what tests should I run?" ───
+  scenarios.push({
+    question: `I changed ${utilFileRel} — what tests should I run?`,
+    without(files) {
+      const r = new AgentReplay(this.question);
+      const changedFile = sym.utilFile;
+
+      // Step 1: Read the changed file
+      const t0 = performance.now();
+      const content = readFileSync(changedFile, 'utf-8');
+      r.step('read_file', `${rel(changedFile)} (understand changes)`, performance.now() - t0, content.length);
+
+      // Step 2: Extract exported symbols
+      const t1 = performance.now();
+      const exports = [...content.matchAll(/export\s+(?:function|const|class|interface|type)\s+(\w+)/g)].map(m => m[1]);
+      r.step('grep_search', `exported symbols: ${exports.slice(0,5).join(', ')}`, performance.now() - t1, 512);
+
+      // Step 3: For each export, grep who imports it
+      const allFiles = walkFiles(TARGET, ['.ts','.js','.py','.tsx','.jsx','.test.ts']);
+      const testFilesFound = [];
+      for (const exp of exports) {
+        for (const f of allFiles) {
+          try {
+            const c = readFileSync(f, 'utf-8');
+            if (c.includes(exp) && f.includes('test')) testFilesFound.push(f);
+          } catch {}
+        }
+      }
+      const t2 = performance.now();
+      r.step('grep_search', `find tests importing ${exports.length} symbols`, t2 - t1, 512 * exports.length);
+
+      // Step 4: Find indirect dependents
+      const t3 = performance.now();
+      const dependents = [];
+      const baseName = rel(changedFile).replace(/\.ts$/, '');
       for (const f of allFiles) {
         try {
           const c = readFileSync(f, 'utf-8');
-          if (c.includes(exp) && f.includes('test')) testFiles.push(f);
+          if (c.includes(baseName) || exports.some(e => c.includes(e))) {
+            if (f !== changedFile) dependents.push(f);
+          }
         } catch {}
       }
-    }
-    const t2 = performance.now();
-    r.step('grep_search', `find test files importing ${exports.length} symbols`, t2 - t1, 512 * exports.length);
+      r.step('grep_search', `dependents of ${rel(changedFile)} → ${dependents.length} files`, performance.now() - t3, 512);
 
-    // Step 4: Find indirect dependents — files that import config
-    const t3 = performance.now();
-    const dependents = [];
-    for (const f of allFiles) {
-      try {
-        const c = readFileSync(f, 'utf-8');
-        if (c.includes("from './config") || c.includes("from '../config") || c.includes('from "./config')) {
-          dependents.push(f);
+      // Step 5: Find test files for dependents
+      const t4 = performance.now();
+      const indirectTests = new Set();
+      for (const dep of dependents) {
+        for (const f of allFiles) {
+          if (f.includes('test')) indirectTests.add(rel(f));
         }
-      } catch {}
-    }
-    r.step('grep_search', `"from './config" → ${dependents.length} dependents`, performance.now() - t3, 512);
-
-    // Step 5: For each dependent, find its test files
-    const t4 = performance.now();
-    const indirectTests = new Set();
-    for (const dep of dependents) {
-      const baseName = rel(dep).replace(/\.ts$/, '').replace('src/', '');
-      for (const f of allFiles) {
-        if (f.includes('test') && f.includes(baseName)) indirectTests.add(rel(f));
       }
+      r.step('grep_search', `find tests for ${dependents.length} dependents`, performance.now() - t4, 512);
+
+      // Step 6: Read a test file to verify
+      const uniqueTests = [...new Set(testFilesFound)];
+      if (uniqueTests.length > 0) {
+        const t = performance.now();
+        const c = readFileSync(uniqueTests[0], 'utf-8');
+        r.step('read_file', `${rel(uniqueTests[0])} (verify relevance)`, performance.now() - t, Math.min(c.length, 3000));
+      }
+
+      return r;
+    },
+    withCgraph() {
+      const r = new AgentReplay(this.question);
+      const res = cgraph('affected', [utilFileRel]);
+      r.step('cgraph_affected', `"${utilFileRel}" → affected test mapping`, res.elapsed, res.bytes);
+      return r;
     }
-    r.step('grep_search', `find tests for ${dependents.length} dependents`, performance.now() - t4, 512);
+  });
 
-    // Step 6: Read a test file to verify
-    if (testFiles.length > 0) {
-      const t = performance.now();
-      const c = readFileSync(testFiles[0], 'utf-8');
-      r.step('read_file', `${rel(testFiles[0])} (verify relevance)`, performance.now() - t, Math.min(c.length, 3000));
+  // ── Scenario 5: "Explain the architecture" ──
+  scenarios.push({
+    question: 'Explain the architecture and how modules connect.',
+    without(files) {
+      const r = new AgentReplay(this.question);
+
+      // Step 1: List project structure
+      const t0 = performance.now();
+      r.step('list_dir', `src/ → ${files.length} source files`, performance.now() - t0, files.map(rel).join('\n').length);
+
+      // Step 2-6: Read each source file to understand structure
+      const majorFiles = files.slice(0, 5);
+      for (const f of majorFiles) {
+        const t = performance.now();
+        const c = readFileSync(f, 'utf-8');
+        r.step('read_file', `${rel(f)} (understand module)`, performance.now() - t, c.length);
+      }
+
+      // Step 7: Read remaining files
+      const remaining = files.slice(5, 9);
+      for (const f of remaining) {
+        const t = performance.now();
+        const c = readFileSync(f, 'utf-8');
+        r.step('read_file', `${rel(f)} (complete picture)`, performance.now() - t, c.length);
+      }
+
+      // Step 8: Grep for cross-module imports
+      const t1 = performance.now();
+      let importBytes = 0;
+      for (const f of files) {
+        const c = readFileSync(f, 'utf-8');
+        const imps = [...c.matchAll(/import\s+.*from\s+['"]\.\/[^'"]+['"]/g)];
+        importBytes += imps.join('\n').length;
+      }
+      r.step('grep_search', `cross-module imports → dependency map`, performance.now() - t1, importBytes || 2048);
+
+      return r;
+    },
+    withCgraph() {
+      const r = new AgentReplay(this.question);
+      const res1 = cgraph('explore', ['src']);
+      r.step('cgraph_explore', `"src" → module overview`, res1.elapsed, res1.bytes);
+      const res2 = cgraph('files', []);
+      r.step('cgraph_files', `file stats + edge density`, res2.elapsed, res2.bytes);
+      return r;
     }
-
-    return r;
-  },
-  withCgraph() {
-    const r = new AgentReplay(this.question);
-    const cfgRel = 'src/config.ts';
-    const res = cgraph('affected', [cfgRel]);
-    r.step('cgraph_affected', `"${cfgRel}" → affected files + test mapping`, res.elapsed, res.bytes);
-    return r;
-  }
-});
-
-// ── Scenario 5: "Explain the architecture — what are the main modules?" ──
-scenarios.push({
-  question: 'Explain the architecture and how modules connect.',
-  without(files) {
-    const r = new AgentReplay(this.question);
-
-    // Step 1: List project structure
-    const t0 = performance.now();
-    r.step('list_dir', `src/ → ${files.length} source files`, performance.now() - t0, files.map(rel).join('\n').length);
-
-    // Step 2-6: Read each major source file to understand structure
-    const majorFiles = files.filter(f =>
-      ['index.', 'cli.', 'mcp.', 'parser.', 'graph.', 'storage.', 'indexer.', 'search.', 'config.', 'context.'].some(k => f.includes(k))
-    ).slice(0, 5);
-
-    for (const f of majorFiles) {
-      const t = performance.now();
-      const c = readFileSync(f, 'utf-8');
-      r.step('read_file', `${rel(f)} (understand module)`, performance.now() - t, c.length);
-    }
-
-    // Step 7: Agent reads remaining files
-    const remaining = files.filter(f => !majorFiles.includes(f)).slice(0, 4);
-    for (const f of remaining) {
-      const t = performance.now();
-      const c = readFileSync(f, 'utf-8');
-      r.step('read_file', `${rel(f)} (complete picture)`, performance.now() - t, c.length);
-    }
-
-    // Step 8: Agent greps for cross-module imports
-    const t1 = performance.now();
-    let importBytes = 0;
-    for (const f of files) {
-      const c = readFileSync(f, 'utf-8');
-      const imps = [...c.matchAll(/import\s+.*from\s+['"]\.\/[^'"]+['"]/g)];
-      importBytes += imps.join('\n').length;
-    }
-    r.step('grep_search', `cross-module imports → dependency map`, performance.now() - t1, importBytes || 2048);
-
-    return r;
-  },
-  withCgraph() {
-    const r = new AgentReplay(this.question);
-
-    // Single call: explore for high-level overview
-    const res1 = cgraph('explore', ['src']);
-    r.step('cgraph_explore', `"src" → module overview`, res1.elapsed, res1.bytes);
-
-    // Optionally get file-level detail
-    const res2 = cgraph('files', []);
-    r.step('cgraph_files', `file stats + edge density`, res2.elapsed, res2.bytes);
-
-    return r;
-  }
-});
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Run all scenarios
@@ -418,6 +461,9 @@ function main() {
   const files = walkFiles(TARGET);
   console.log(`  Source files: ${files.length}`);
   console.log(`  Agent round-trip assumption: ${AGENT_ROUNDTRIP_MS}ms per tool call`);
+
+  // Build scenarios from detected symbols
+  buildScenarios(files);
   console.log('');
 
   // Ensure index exists
