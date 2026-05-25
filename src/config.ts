@@ -24,6 +24,9 @@ export const DEFAULT_CONFIG: GraphConfig = {
     '.js', '.jsx', '.ts', '.tsx',
     '.mjs', '.cjs',
     '.py', '.pyi',
+    '.c', '.h', '.cpp', '.cc', '.cxx', '.hpp', '.hh', '.hxx',
+    '.sh', '.bash', '.zsh',
+    '.ps1', '.psm1', '.psd1',
   ],
 };
 
