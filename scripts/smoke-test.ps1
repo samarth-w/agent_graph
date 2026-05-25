@@ -166,6 +166,12 @@ try {
     Run-Test "search Flask route" -CgArgs @("search", "health", "--kind", "route") -Expect '"route"'
     Run-Test "python class" -CgArgs @("search", "DataStore", "--kind", "class") -Expect '"DataStore"'
 
+    # --- 14. Agentic Intelligence ---
+    Write-Host "--- Agentic Intelligence ---" -ForegroundColor Yellow
+    Run-Test "auto-context" -CgArgs @("auto-context", "app.ts") -Expect '"symbols"'
+    Run-Test "intent search" -CgArgs @("intent", "greet user") -Expect '"results"'
+    Run-Test "dna" -CgArgs @("dna") -Expect '"languages"'
+
     # --- Summary ---
     Write-Host ""
     Write-Host "==================" -ForegroundColor Cyan

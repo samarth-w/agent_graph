@@ -148,6 +148,11 @@ echo "--- Python ---"
 run_test "search Flask route" "search health --kind route" '"route"'
 run_test "python class" "search DataStore --kind class" '"DataStore"'
 
+echo "--- Agentic Intelligence ---"
+run_test "auto-context" "auto-context app.ts" '"symbols"'
+run_test "intent search" 'intent "greet user"' '"results"'
+run_test "dna" "dna" '"languages"'
+
 # --- Summary ---
 echo
 echo "=================="

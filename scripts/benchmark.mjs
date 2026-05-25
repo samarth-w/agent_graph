@@ -233,6 +233,13 @@ async function main() {
   await benchToolCall(client, 'cgraph_context', 'cgraph_context', { task: 'how does indexing work' }, '');
   await benchToolCall(client, 'cgraph_affected', 'cgraph_affected', { files: 'src/parser.ts' }, '');
 
+  // Agentic intelligence tools
+  await benchToolCall(client, 'cgraph_auto_context', 'cgraph_auto_context', { file: 'src/parser.ts' }, 'Auto Context');
+  await benchToolCall(client, 'cgraph_intent_search', 'cgraph_intent_search', { query: 'parse file and extract symbols' }, 'Intent Search');
+  await benchToolCall(client, 'cgraph_validate_plan', 'cgraph_validate_plan', { symbols: 'parseFile,traverse' }, 'Risk');
+  await benchToolCall(client, 'cgraph_dna', 'cgraph_dna', {}, 'Codebase DNA');
+  // cgraph_lint skipped (requires .cgraph.json rules)
+
   // --- Phase 3: Burst (sequential rapid-fire) ---
   console.log('');
   console.log('── Phase 3: Burst (10 sequential calls) ────────');

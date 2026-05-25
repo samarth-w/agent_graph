@@ -1,188 +1,256 @@
-graph LR
-  subgraph demo_finance_src_reports_report_generator_ts["demo/finance/src/reports/report-generator.ts"]
-    demo_finance_src_reports_report_generator_ts__ReportGenerator[["ReportGenerator"]]
-    demo_finance_src_reports_report_generator_ts__ReportGenerator_generateSummary("generateSummary")
-    demo_finance_src_reports_report_generator_ts__ReportGenerator_formatTextReport("formatTextReport")
+﻿graph LR
+  subgraph src_app_ts["src/app.ts"]
+    src_app_ts__App(["App"])
+    src_app_ts__createApp("createApp")
+    src_app_ts__seedDemoData("seedDemoData")
+    src_app_ts__main("main")
   end
-  subgraph demo_finance___tests___finance_test_ts["demo/finance/__tests__/finance.test.ts"]
-    demo_finance___tests___finance_test_ts__testReportGeneration("testReportGeneration")
-    demo_finance___tests___finance_test_ts__testRoundMoney("testRoundMoney")
+  subgraph __tests___finance_test_ts["__tests__/finance.test.ts"]
+    __tests___finance_test_ts__testRoundMoney("testRoundMoney")
+    __tests___finance_test_ts__testAddSubtractMoney("testAddSubtractMoney")
+    __tests___finance_test_ts__testFormatMoney("testFormatMoney")
+    __tests___finance_test_ts__testDateUtils("testDateUtils")
+    __tests___finance_test_ts__testAccountService("testAccountService")
+    __tests___finance_test_ts__testTransactionService("testTransactionService")
+    __tests___finance_test_ts__testBudgetAlerts("testBudgetAlerts")
+    __tests___finance_test_ts__testReportGeneration("testReportGeneration")
   end
-  subgraph demo_finance_src_app_ts["demo/finance/src/app.ts"]
-    demo_finance_src_app_ts__createApp("createApp")
-    demo_finance_src_app_ts__App(["App"])
-    demo_finance_src_app_ts__main("main")
+  subgraph src_api_controller_ts["src/api/controller.ts"]
+    src_api_controller_ts__ApiRequest(["ApiRequest"])
+    src_api_controller_ts__ApiResponse(["ApiResponse"])
+    src_api_controller_ts__ApiController[["ApiController"]]
+    src_api_controller_ts__ApiController_constructor("constructor")
+    src_api_controller_ts__ApiController_handle("handle")
+    src_api_controller_ts__ApiController_handleAccounts("handleAccounts")
+    src_api_controller_ts__ApiController_handleTransactions("handleTransactions")
+    src_api_controller_ts__ApiController_handleBudgets("handleBudgets")
+    src_api_controller_ts__ApiController_handleReports("handleReports")
+    src_api_controller_ts__ApiController_handleRecurring("handleRecurring")
+    src_api_controller_ts__ApiController_parseDateRange("parseDateRange")
   end
-  subgraph demo_finance_src_api_controller_ts["demo/finance/src/api/controller.ts"]
-    demo_finance_src_api_controller_ts__ApiController_constructor("constructor")
-    demo_finance_src_api_controller_ts__ApiRequest(["ApiRequest"])
-    demo_finance_src_api_controller_ts__ApiController[["ApiController"]]
+  subgraph src_api_middleware_ts["src/api/middleware.ts"]
+    src_api_middleware_ts__RequestLog(["RequestLog"])
+    src_api_middleware_ts__RequestLogger[["RequestLogger"]]
+    src_api_middleware_ts__RequestLogger_log("log")
+    src_api_middleware_ts__RequestLogger_getRecentLogs("getRecentLogs")
+    src_api_middleware_ts__RequestLogger_getErrorLogs("getErrorLogs")
+    src_api_middleware_ts__RequestLogger_getAverageResponseTime("getAverageResponseTime")
+    src_api_middleware_ts__RequestLogger_getStatusBreakdown("getStatusBreakdown")
+    src_api_middleware_ts__RequestLogger_clear("clear")
   end
-  subgraph demo_finance_src_events_event_bus_ts["demo/finance/src/events/event-bus.ts"]
-    demo_finance_src_events_event_bus_ts__EventBus[["EventBus"]]
+  subgraph src_reports_csv_export_ts["src/reports/csv-export.ts"]
+    src_reports_csv_export_ts__CsvRow(["CsvRow"])
+    src_reports_csv_export_ts__transactionsToCsv("transactionsToCsv")
+    src_reports_csv_export_ts__parseCsvLine("parseCsvLine")
+    src_reports_csv_export_ts__importTransactionsFromCsv("importTransactionsFromCsv")
+    src_reports_csv_export_ts__ImportResult(["ImportResult"])
   end
-  subgraph demo_finance_src_models_store_ts["demo/finance/src/models/store.ts"]
-    demo_finance_src_models_store_ts__DataStore[["DataStore"]]
-    demo_finance_src_models_store_ts__DataStore_addCategory("addCategory")
+  subgraph src_reports_report_generator_ts["src/reports/report-generator.ts"]
+    src_reports_report_generator_ts__SpendingByCategory(["SpendingByCategory"])
+    src_reports_report_generator_ts__MonthlyTrend(["MonthlyTrend"])
+    src_reports_report_generator_ts__FinancialSummary(["FinancialSummary"])
+    src_reports_report_generator_ts__ReportGenerator[["ReportGenerator"]]
+    src_reports_report_generator_ts__ReportGenerator_constructor("constructor")
+    src_reports_report_generator_ts__ReportGenerator_getSpendingByCategory("getSpendingByCategory")
+    src_reports_report_generator_ts__ReportGenerator_getMonthlyTrend("getMonthlyTrend")
+    src_reports_report_generator_ts__ReportGenerator_generateSummary("generateSummary")
+    src_reports_report_generator_ts__ReportGenerator_formatTextReport("formatTextReport")
+    src_reports_report_generator_ts__ReportGenerator_getAverageDailySpending("getAverageDailySpending")
+    src_reports_report_generator_ts__ReportGenerator_projectEndOfMonth("projectEndOfMonth")
   end
-  subgraph demo_finance_src_services_account_service_ts["demo/finance/src/services/account-service.ts"]
-    demo_finance_src_services_account_service_ts__AccountService[["AccountService"]]
-    demo_finance_src_services_account_service_ts__AccountService_createAccount("createAccount")
+  subgraph src_models_store_ts["src/models/store.ts"]
+    src_models_store_ts__DataStore[["DataStore"]]
+    src_models_store_ts__DataStore_addAccount("addAccount")
+    src_models_store_ts__DataStore_getAccount("getAccount")
+    src_models_store_ts__DataStore_updateAccount("updateAccount")
+    src_models_store_ts__DataStore_getAllAccounts("getAllAccounts")
+    src_models_store_ts__DataStore_addTransaction("addTransaction")
+    src_models_store_ts__DataStore_getTransaction("getTransaction")
+    src_models_store_ts__DataStore_getTransactionsByAccount("getTransactionsByAccount")
+    src_models_store_ts__DataStore_getTransactionsByCategory("getTransactionsByCategory")
+    src_models_store_ts__DataStore_getTransactionsInRange("getTransactionsInRange")
+    src_models_store_ts__DataStore_getAllTransactions("getAllTransactions")
+    src_models_store_ts__DataStore_deleteTransaction("deleteTransaction")
+    src_models_store_ts__DataStore_addCategory("addCategory")
+    src_models_store_ts__DataStore_getCategory("getCategory")
+    src_models_store_ts__DataStore_getAllCategories("getAllCategories")
+    src_models_store_ts__DataStore_getSubCategories("getSubCategories")
+    src_models_store_ts__DataStore_addBudget("addBudget")
+    src_models_store_ts__DataStore_getBudget("getBudget")
+    src_models_store_ts__DataStore_getBudgetByCategory("getBudgetByCategory")
+    src_models_store_ts__DataStore_updateBudget("updateBudget")
+    src_models_store_ts__DataStore_getAllBudgets("getAllBudgets")
+    src_models_store_ts__DataStore_clear("clear")
+    src_models_store_ts__DataStore_getStats("getStats")
   end
-  subgraph demo_finance_src_services_budget_service_ts["demo/finance/src/services/budget-service.ts"]
-    demo_finance_src_services_budget_service_ts__BudgetService[["BudgetService"]]
+  subgraph src_models_types_ts["src/models/types.ts"]
+    src_models_types_ts__Currency["Currency"]
+    src_models_types_ts__AccountType["AccountType"]
+    src_models_types_ts__TransactionType["TransactionType"]
+    src_models_types_ts__RecurrenceFrequency["RecurrenceFrequency"]
+    src_models_types_ts__Money(["Money"])
+    src_models_types_ts__Account(["Account"])
+    src_models_types_ts__Category(["Category"])
+    src_models_types_ts__Transaction(["Transaction"])
+    src_models_types_ts__RecurringRule(["RecurringRule"])
+    src_models_types_ts__Budget(["Budget"])
+    src_models_types_ts__BudgetAlert(["BudgetAlert"])
+    src_models_types_ts__DateRange(["DateRange"])
+    src_models_types_ts__PaginationOptions(["PaginationOptions"])
+    src_models_types_ts__PaginatedResult(["PaginatedResult"])
   end
-  subgraph demo_finance_src_services_transaction_service_ts["demo/finance/src/services/transaction-service.ts"]
-    demo_finance_src_services_transaction_service_ts__TransactionService[["TransactionService"]]
-    demo_finance_src_services_transaction_service_ts__TransactionService_recordTransaction("recordTransaction")
+  subgraph src_services_account_service_ts["src/services/account-service.ts"]
+    src_services_account_service_ts__AccountService[["AccountService"]]
+    src_services_account_service_ts__AccountService_constructor("constructor")
+    src_services_account_service_ts__AccountService_createAccount("createAccount")
+    src_services_account_service_ts__AccountService_getAccount("getAccount")
+    src_services_account_service_ts__AccountService_listAccounts("listAccounts")
+    src_services_account_service_ts__AccountService_deactivateAccount("deactivateAccount")
+    src_services_account_service_ts__AccountService_applyDebit("applyDebit")
+    src_services_account_service_ts__AccountService_applyCredit("applyCredit")
+    src_services_account_service_ts__AccountService_getNetWorth("getNetWorth")
+    src_services_account_service_ts__AccountService_getAccountSummary("getAccountSummary")
   end
-  subgraph demo_finance_src_api_middleware_ts["demo/finance/src/api/middleware.ts"]
-    demo_finance_src_api_middleware_ts__RequestLogger[["RequestLogger"]]
-    demo_finance_src_api_middleware_ts__RequestLog(["RequestLog"])
+  subgraph src_services_budget_service_ts["src/services/budget-service.ts"]
+    src_services_budget_service_ts__BudgetService[["BudgetService"]]
+    src_services_budget_service_ts__BudgetService_constructor("constructor")
+    src_services_budget_service_ts__BudgetService_createBudget("createBudget")
+    src_services_budget_service_ts__BudgetService_trackSpending("trackSpending")
+    src_services_budget_service_ts__BudgetService_getBudgetStatus("getBudgetStatus")
+    src_services_budget_service_ts__BudgetService_resetMonthlyBudgets("resetMonthlyBudgets")
   end
-  subgraph demo_finance_src_events_notifications_ts["demo/finance/src/events/notifications.ts"]
-    demo_finance_src_events_notifications_ts__NotificationService[["NotificationService"]]
-  end
-  subgraph demo_finance_src_services_recurring_processor_ts["demo/finance/src/services/recurring-processor.ts"]
-    demo_finance_src_services_recurring_processor_ts__RecurringProcessor[["RecurringProcessor"]]
-  end
-  subgraph demo_finance_src_utils_dates_ts["demo/finance/src/utils/dates.ts"]
-    demo_finance_src_utils_dates_ts__startOfMonth("startOfMonth")
-    demo_finance_src_utils_dates_ts__endOfMonth("endOfMonth")
-    demo_finance_src_utils_dates_ts__addDays("addDays")
-    demo_finance_src_utils_dates_ts__daysBetween("daysBetween")
-    demo_finance_src_utils_dates_ts__formatDate("formatDate")
-    demo_finance_src_utils_dates_ts__parseDate("parseDate")
-  end
-  subgraph demo_finance_src_utils_validation_ts["demo/finance/src/utils/validation.ts"]
-    demo_finance_src_utils_validation_ts__roundMoney("roundMoney")
-    demo_finance_src_utils_validation_ts__addMoney("addMoney")
-    demo_finance_src_utils_validation_ts__subtractMoney("subtractMoney")
-    demo_finance_src_utils_validation_ts__formatMoney("formatMoney")
-    demo_finance_src_utils_validation_ts__validateTransaction("validateTransaction")
-  end
-  subgraph demo_finance_src_models_types_ts["demo/finance/src/models/types.ts"]
-    demo_finance_src_models_types_ts__Category(["Category"])
-    demo_finance_src_models_types_ts__Currency["Currency"]
-    demo_finance_src_models_types_ts__AccountType["AccountType"]
-    demo_finance_src_models_types_ts__TransactionType["TransactionType"]
-    demo_finance_src_models_types_ts__DateRange(["DateRange"])
-  end
-  subgraph demo_finance_src_reports_csv_export_ts["demo/finance/src/reports/csv-export.ts"]
-    demo_finance_src_reports_csv_export_ts__transactionsToCsv("transactionsToCsv")
-    demo_finance_src_reports_csv_export_ts__importTransactionsFromCsv("importTransactionsFromCsv")
-  end
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator
-  demo_finance_src_api_controller_ts__ApiController_constructor -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_reports_report_generator_ts__ReportGenerator
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_reports_report_generator_ts__ReportGenerator
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_reports_report_generator_ts__ReportGenerator
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator_generateSummary
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator_formatTextReport
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_models_store_ts__DataStore
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_models_store_ts__DataStore_addCategory
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_services_account_service_ts__AccountService_createAccount
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance___tests___finance_test_ts__testReportGeneration -->|calls| demo_finance_src_services_transaction_service_ts__TransactionService_recordTransaction
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_api_controller_ts__ApiController
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_api_middleware_ts__RequestLogger
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_events_notifications_ts__NotificationService
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_services_recurring_processor_ts__RecurringProcessor
-  demo_finance_src_app_ts__createApp -->|calls| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance_src_app_ts__main -->|calls| demo_finance_src_app_ts__createApp
-  demo_finance_src_api_controller_ts__ApiController_constructor -->|calls| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance_src_api_controller_ts__ApiController_constructor -->|calls| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance_src_api_controller_ts__ApiController_constructor -->|calls| demo_finance_src_services_recurring_processor_ts__RecurringProcessor
-  demo_finance_src_api_controller_ts__ApiController_constructor -->|calls| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_events_notifications_ts__NotificationService
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_dates_ts__startOfMonth
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_dates_ts__endOfMonth
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_dates_ts__addDays
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_dates_ts__daysBetween
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_dates_ts__formatDate
-  demo_finance___tests___finance_test_ts__testRoundMoney -->|calls| demo_finance_src_utils_validation_ts__roundMoney
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_validation_ts__roundMoney
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_validation_ts__addMoney
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_validation_ts__subtractMoney
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_validation_ts__formatMoney
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_utils_validation_ts__validateTransaction
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance___tests___finance_test_ts__testRoundMoney -.->|imports| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_api_controller_ts__ApiController
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_api_middleware_ts__RequestLogger
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_events_notifications_ts__NotificationService
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_models_types_ts__Category
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_services_recurring_processor_ts__RecurringProcessor
-  demo_finance_src_app_ts__App -.->|imports| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_reports_csv_export_ts__transactionsToCsv
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_reports_csv_export_ts__importTransactionsFromCsv
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_models_types_ts__Currency
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_models_types_ts__AccountType
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_models_types_ts__TransactionType
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_models_types_ts__DateRange
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_utils_dates_ts__parseDate
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_services_recurring_processor_ts__RecurringProcessor
-  demo_finance_src_api_controller_ts__ApiRequest -.->|imports| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance_src_api_middleware_ts__RequestLog -.->|imports| demo_finance_src_api_controller_ts__ApiRequest
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_services_budget_service_ts__BudgetService -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_services_recurring_processor_ts__RecurringProcessor -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_events_event_bus_ts__EventBus
-  demo_finance_src_reports_report_generator_ts__ReportGenerator_generateSummary -->|calls| demo_finance_src_utils_dates_ts__formatDate
-  demo_finance_src_reports_report_generator_ts__ReportGenerator_generateSummary -->|calls| demo_finance_src_utils_validation_ts__subtractMoney
-  demo_finance_src_reports_report_generator_ts__ReportGenerator_formatTextReport -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator_generateSummary
-  demo_finance_src_reports_report_generator_ts__ReportGenerator_formatTextReport -->|calls| demo_finance_src_utils_dates_ts__formatDate
-  demo_finance_src_reports_report_generator_ts__ReportGenerator_formatTextReport -->|calls| demo_finance_src_utils_validation_ts__formatMoney
-  demo_finance_src_app_ts__main -->|calls| demo_finance_src_reports_report_generator_ts__ReportGenerator_formatTextReport
-  demo_finance_src_models_store_ts__DataStore -.->|imports| demo_finance_src_models_types_ts__Category
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_services_budget_service_ts__BudgetService -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_services_recurring_processor_ts__RecurringProcessor -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_models_store_ts__DataStore
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_models_types_ts__Currency
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_models_types_ts__AccountType
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_utils_validation_ts__addMoney
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_utils_validation_ts__subtractMoney
-  demo_finance_src_services_account_service_ts__AccountService -.->|imports| demo_finance_src_utils_validation_ts__formatMoney
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_services_account_service_ts__AccountService
-  demo_finance_src_services_budget_service_ts__BudgetService -.->|imports| demo_finance_src_models_types_ts__Currency
-  demo_finance_src_services_budget_service_ts__BudgetService -.->|imports| demo_finance_src_utils_validation_ts__addMoney
-  demo_finance_src_services_budget_service_ts__BudgetService -.->|imports| demo_finance_src_utils_validation_ts__subtractMoney
-  demo_finance_src_services_budget_service_ts__BudgetService -.->|imports| demo_finance_src_utils_validation_ts__formatMoney
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_services_budget_service_ts__BudgetService
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_models_types_ts__Currency
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_models_types_ts__TransactionType
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_models_types_ts__DateRange
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_utils_validation_ts__roundMoney
-  demo_finance_src_services_transaction_service_ts__TransactionService -.->|imports| demo_finance_src_utils_validation_ts__validateTransaction
-  demo_finance_src_services_recurring_processor_ts__RecurringProcessor -.->|imports| demo_finance_src_services_transaction_service_ts__TransactionService
-  demo_finance_src_services_transaction_service_ts__TransactionService_recordTransaction -->|calls| demo_finance_src_utils_validation_ts__roundMoney
-  demo_finance_src_services_transaction_service_ts__TransactionService_recordTransaction -->|calls| demo_finance_src_utils_validation_ts__validateTransaction
-  demo_finance_src_reports_csv_export_ts__importTransactionsFromCsv -->|calls| demo_finance_src_services_transaction_service_ts__TransactionService_recordTransaction
-  demo_finance_src_services_recurring_processor_ts__RecurringProcessor -.->|imports| demo_finance_src_utils_dates_ts__formatDate
-  demo_finance_src_utils_dates_ts__startOfMonth -.->|imports| demo_finance_src_models_types_ts__DateRange
-  demo_finance_src_reports_csv_export_ts__transactionsToCsv -->|calls| demo_finance_src_utils_dates_ts__formatDate
-  demo_finance_src_utils_validation_ts__roundMoney -.->|imports| demo_finance_src_models_types_ts__Currency
-  demo_finance_src_utils_validation_ts__roundMoney -.->|imports| demo_finance_src_models_types_ts__Category
-  demo_finance_src_utils_validation_ts__addMoney -->|calls| demo_finance_src_utils_validation_ts__roundMoney
-  demo_finance_src_utils_validation_ts__subtractMoney -->|calls| demo_finance_src_utils_validation_ts__roundMoney
-  demo_finance_src_reports_csv_export_ts__importTransactionsFromCsv -->|calls| demo_finance_src_utils_dates_ts__parseDate
+  src_app_ts__createApp -->|calls| src_models_store_ts__DataStore
+  src_app_ts__createApp -->|calls| src_services_account_service_ts__AccountService
+  src_app_ts__createApp -->|calls| src_services_budget_service_ts__BudgetService
+  src_app_ts__createApp -->|calls| src_reports_report_generator_ts__ReportGenerator
+  src_app_ts__createApp -->|calls| src_api_controller_ts__ApiController
+  src_app_ts__createApp -->|calls| src_api_middleware_ts__RequestLogger
+  src_app_ts__seedDemoData -->|calls| src_models_store_ts__DataStore_addCategory
+  src_app_ts__seedDemoData -->|calls| src_services_account_service_ts__AccountService_createAccount
+  src_app_ts__seedDemoData -->|calls| src_services_budget_service_ts__BudgetService_createBudget
+  src_app_ts__main -->|calls| src_app_ts__createApp
+  src_app_ts__main -->|calls| src_app_ts__seedDemoData
+  src_app_ts__main -->|calls| src_api_middleware_ts__RequestLogger_log
+  src_app_ts__main -->|calls| src_reports_report_generator_ts__ReportGenerator_formatTextReport
+  src_app_ts__main -->|calls| src_models_store_ts__DataStore_getStats
+  __tests___finance_test_ts__testAccountService -->|calls| src_models_store_ts__DataStore
+  __tests___finance_test_ts__testAccountService -->|calls| src_services_account_service_ts__AccountService
+  __tests___finance_test_ts__testAccountService -->|calls| src_services_account_service_ts__AccountService_createAccount
+  __tests___finance_test_ts__testAccountService -->|calls| src_models_store_ts__DataStore_getAccount
+  __tests___finance_test_ts__testAccountService -->|calls| src_services_account_service_ts__AccountService_applyDebit
+  __tests___finance_test_ts__testAccountService -->|calls| src_services_account_service_ts__AccountService_applyCredit
+  __tests___finance_test_ts__testTransactionService -->|calls| src_models_store_ts__DataStore
+  __tests___finance_test_ts__testTransactionService -->|calls| src_services_account_service_ts__AccountService
+  __tests___finance_test_ts__testTransactionService -->|calls| src_services_budget_service_ts__BudgetService
+  __tests___finance_test_ts__testTransactionService -->|calls| src_models_store_ts__DataStore_addCategory
+  __tests___finance_test_ts__testTransactionService -->|calls| src_services_account_service_ts__AccountService_createAccount
+  __tests___finance_test_ts__testTransactionService -->|calls| src_models_store_ts__DataStore_getAccount
+  __tests___finance_test_ts__testBudgetAlerts -->|calls| src_models_store_ts__DataStore
+  __tests___finance_test_ts__testBudgetAlerts -->|calls| src_services_account_service_ts__AccountService
+  __tests___finance_test_ts__testBudgetAlerts -->|calls| src_services_budget_service_ts__BudgetService
+  __tests___finance_test_ts__testBudgetAlerts -->|calls| src_models_store_ts__DataStore_addCategory
+  __tests___finance_test_ts__testBudgetAlerts -->|calls| src_services_account_service_ts__AccountService_createAccount
+  __tests___finance_test_ts__testBudgetAlerts -->|calls| src_services_budget_service_ts__BudgetService_createBudget
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_models_store_ts__DataStore
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_services_account_service_ts__AccountService
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_services_budget_service_ts__BudgetService
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_reports_report_generator_ts__ReportGenerator
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_models_store_ts__DataStore_addCategory
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_services_account_service_ts__AccountService_createAccount
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_reports_report_generator_ts__ReportGenerator_generateSummary
+  __tests___finance_test_ts__testReportGeneration -->|calls| src_reports_report_generator_ts__ReportGenerator_formatTextReport
+  src_api_controller_ts__ApiController_constructor -->|calls| src_services_account_service_ts__AccountService
+  src_api_controller_ts__ApiController_constructor -->|calls| src_services_budget_service_ts__BudgetService
+  src_api_controller_ts__ApiController_constructor -->|calls| src_reports_report_generator_ts__ReportGenerator
+  src_api_controller_ts__ApiController_handle -->|calls| src_api_controller_ts__ApiController_handleAccounts
+  src_api_controller_ts__ApiController_handle -->|calls| src_api_controller_ts__ApiController_handleTransactions
+  src_api_controller_ts__ApiController_handle -->|calls| src_api_controller_ts__ApiController_handleBudgets
+  src_api_controller_ts__ApiController_handle -->|calls| src_api_controller_ts__ApiController_handleReports
+  src_api_controller_ts__ApiController_handle -->|calls| src_api_controller_ts__ApiController_handleRecurring
+  src_api_controller_ts__ApiController_handleAccounts -->|calls| src_models_store_ts__DataStore_getAccount
+  src_api_controller_ts__ApiController_handleAccounts -->|calls| src_services_account_service_ts__AccountService_listAccounts
+  src_api_controller_ts__ApiController_handleAccounts -->|calls| src_services_account_service_ts__AccountService_createAccount
+  src_api_controller_ts__ApiController_handleAccounts -->|calls| src_services_account_service_ts__AccountService_deactivateAccount
+  src_api_controller_ts__ApiController_handleTransactions -->|calls| src_api_controller_ts__ApiController_parseDateRange
+  src_api_controller_ts__ApiController_handleTransactions -->|calls| src_models_store_ts__DataStore_deleteTransaction
+  src_api_controller_ts__ApiController_handleBudgets -->|calls| src_services_budget_service_ts__BudgetService_getBudgetStatus
+  src_api_controller_ts__ApiController_handleBudgets -->|calls| src_services_budget_service_ts__BudgetService_createBudget
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_reports_report_generator_ts__ReportGenerator_generateSummary
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_api_controller_ts__ApiController_parseDateRange
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_reports_report_generator_ts__ReportGenerator_getSpendingByCategory
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_reports_report_generator_ts__ReportGenerator_getMonthlyTrend
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_reports_report_generator_ts__ReportGenerator_formatTextReport
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_reports_csv_export_ts__transactionsToCsv
+  src_api_controller_ts__ApiController_handleReports -->|calls| src_reports_report_generator_ts__ReportGenerator_projectEndOfMonth
+  src_reports_csv_export_ts__importTransactionsFromCsv -->|calls| src_reports_csv_export_ts__parseCsvLine
+  src_reports_report_generator_ts__ReportGenerator_getSpendingByCategory -->|calls| src_models_store_ts__DataStore_getCategory
+  src_reports_report_generator_ts__ReportGenerator_generateSummary -->|calls| src_services_account_service_ts__AccountService_getNetWorth
+  src_reports_report_generator_ts__ReportGenerator_generateSummary -->|calls| src_reports_report_generator_ts__ReportGenerator_getSpendingByCategory
+  src_reports_report_generator_ts__ReportGenerator_generateSummary -->|calls| src_services_budget_service_ts__BudgetService_getBudgetStatus
+  src_reports_report_generator_ts__ReportGenerator_formatTextReport -->|calls| src_reports_report_generator_ts__ReportGenerator_generateSummary
+  src_reports_report_generator_ts__ReportGenerator_projectEndOfMonth -->|calls| src_services_account_service_ts__AccountService_getNetWorth
+  src_services_account_service_ts__AccountService_createAccount -->|calls| src_models_store_ts__DataStore_addAccount
+  src_services_account_service_ts__AccountService_listAccounts -->|calls| src_models_store_ts__DataStore_getAllAccounts
+  src_services_account_service_ts__AccountService_deactivateAccount -->|calls| src_services_account_service_ts__AccountService_getAccount
+  src_services_account_service_ts__AccountService_deactivateAccount -->|calls| src_models_store_ts__DataStore_updateAccount
+  src_services_account_service_ts__AccountService_applyDebit -->|calls| src_services_account_service_ts__AccountService_getAccount
+  src_services_account_service_ts__AccountService_applyDebit -->|calls| src_models_store_ts__DataStore_updateAccount
+  src_services_account_service_ts__AccountService_applyCredit -->|calls| src_services_account_service_ts__AccountService_getAccount
+  src_services_account_service_ts__AccountService_applyCredit -->|calls| src_models_store_ts__DataStore_updateAccount
+  src_services_account_service_ts__AccountService_getNetWorth -->|calls| src_services_account_service_ts__AccountService_listAccounts
+  src_services_account_service_ts__AccountService_getAccountSummary -->|calls| src_services_account_service_ts__AccountService_listAccounts
+  src_services_budget_service_ts__BudgetService_createBudget -->|calls| src_models_store_ts__DataStore_addBudget
+  src_services_budget_service_ts__BudgetService_trackSpending -->|calls| src_models_store_ts__DataStore_getBudgetByCategory
+  src_services_budget_service_ts__BudgetService_trackSpending -->|calls| src_models_store_ts__DataStore_updateBudget
+  src_services_budget_service_ts__BudgetService_trackSpending -->|calls| src_models_store_ts__DataStore_getCategory
+  src_services_budget_service_ts__BudgetService_getBudgetStatus -->|calls| src_models_store_ts__DataStore_getAllBudgets
+  src_services_budget_service_ts__BudgetService_getBudgetStatus -->|calls| src_models_store_ts__DataStore_getCategory
+  src_services_budget_service_ts__BudgetService_resetMonthlyBudgets -->|calls| src_models_store_ts__DataStore_getAllBudgets
+  src_services_budget_service_ts__BudgetService_resetMonthlyBudgets -->|calls| src_models_store_ts__DataStore_updateBudget
+  src_app_ts__App -.->|imports| src_models_store_ts__DataStore
+  src_app_ts__App -.->|imports| src_services_account_service_ts__AccountService
+  src_app_ts__App -.->|imports| src_services_budget_service_ts__BudgetService
+  src_app_ts__App -.->|imports| src_reports_report_generator_ts__ReportGenerator
+  src_app_ts__App -.->|imports| src_api_controller_ts__ApiController
+  src_app_ts__App -.->|imports| src_api_middleware_ts__RequestLogger
+  src_app_ts__App -.->|imports| src_models_types_ts__Category
+  __tests___finance_test_ts__testRoundMoney -.->|imports| src_models_store_ts__DataStore
+  __tests___finance_test_ts__testRoundMoney -.->|imports| src_services_account_service_ts__AccountService
+  __tests___finance_test_ts__testRoundMoney -.->|imports| src_services_budget_service_ts__BudgetService
+  __tests___finance_test_ts__testRoundMoney -.->|imports| src_reports_report_generator_ts__ReportGenerator
+  src_api_controller_ts__ApiRequest -.->|imports| src_models_store_ts__DataStore
+  src_api_controller_ts__ApiRequest -.->|imports| src_services_account_service_ts__AccountService
+  src_api_controller_ts__ApiRequest -.->|imports| src_services_budget_service_ts__BudgetService
+  src_api_controller_ts__ApiRequest -.->|imports| src_reports_report_generator_ts__ReportGenerator
+  src_api_controller_ts__ApiRequest -.->|imports| src_reports_csv_export_ts__transactionsToCsv
+  src_api_controller_ts__ApiRequest -.->|imports| src_reports_csv_export_ts__importTransactionsFromCsv
+  src_api_controller_ts__ApiRequest -.->|imports| src_models_types_ts__AccountType
+  src_api_controller_ts__ApiRequest -.->|imports| src_models_types_ts__Currency
+  src_api_controller_ts__ApiRequest -.->|imports| src_models_types_ts__TransactionType
+  src_api_controller_ts__ApiRequest -.->|imports| src_models_types_ts__DateRange
+  src_api_middleware_ts__RequestLog -.->|imports| src_api_controller_ts__ApiRequest
+  src_api_middleware_ts__RequestLog -.->|imports| src_api_controller_ts__ApiResponse
+  src_reports_csv_export_ts__CsvRow -.->|imports| src_models_types_ts__Transaction
+  src_reports_csv_export_ts__CsvRow -.->|imports| src_models_types_ts__Currency
+  src_reports_csv_export_ts__CsvRow -.->|imports| src_models_types_ts__TransactionType
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_models_types_ts__Transaction
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_models_types_ts__Money
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_models_types_ts__DateRange
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_models_types_ts__Category
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_models_store_ts__DataStore
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_services_budget_service_ts__BudgetService
+  src_reports_report_generator_ts__SpendingByCategory -.->|imports| src_services_account_service_ts__AccountService
+  src_models_store_ts__DataStore -.->|imports| src_models_types_ts__Account
+  src_models_store_ts__DataStore -.->|imports| src_models_types_ts__Transaction
+  src_models_store_ts__DataStore -.->|imports| src_models_types_ts__Category
+  src_models_store_ts__DataStore -.->|imports| src_models_types_ts__Budget
+  src_services_account_service_ts__AccountService -.->|imports| src_models_types_ts__Account
+  src_services_account_service_ts__AccountService -.->|imports| src_models_types_ts__AccountType
+  src_services_account_service_ts__AccountService -.->|imports| src_models_types_ts__Money
+  src_services_account_service_ts__AccountService -.->|imports| src_models_types_ts__Currency
+  src_services_account_service_ts__AccountService -.->|imports| src_models_store_ts__DataStore
+  src_services_budget_service_ts__BudgetService -.->|imports| src_models_types_ts__Budget
+  src_services_budget_service_ts__BudgetService -.->|imports| src_models_types_ts__Money
+  src_services_budget_service_ts__BudgetService -.->|imports| src_models_types_ts__Currency
+  src_services_budget_service_ts__BudgetService -.->|imports| src_models_types_ts__BudgetAlert
+  src_services_budget_service_ts__BudgetService -.->|imports| src_models_store_ts__DataStore
