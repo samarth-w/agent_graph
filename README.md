@@ -6,7 +6,9 @@ Local-first code graph CLI that gives GitHub Copilot (and other AI agents) insta
 
 ## Features
 
+- **Install and forget** — one-command installer configures everything, auto-indexes on first Copilot query
 - **11 MCP tools** — search, context, trace, explore, node, callers, callees, impact, files, status, affected
+- **5.7x faster agent workflows** — collapses multi-step grep→read chains into single precomputed queries ([benchmarks](#benchmarks))
 - **Multi-language** — TypeScript, JavaScript, JSX, TSX, Python
 - **Framework-aware** — Express, React Router, Next.js, Flask, FastAPI, Django route extraction
 - **Dynamic dispatch** — synthesizes edges for callbacks, event emitters, HOFs, promise chains
@@ -26,10 +28,6 @@ powershell -ExecutionPolicy Bypass -File install.ps1
 
 **macOS / Linux:**
 ```bash
-# After repo is hosted, this will work as a one-liner:
-# curl -fsSL https://raw.githubusercontent.com/samarth-w/agent_graph/master/install.sh | bash
-
-# For now, from a shared copy:
 bash install.sh
 ```
 
@@ -44,12 +42,7 @@ This will:
 
 ### Option B: Install from source (if you have Node.js)
 
-### Prerequisites
-
-- Node.js >= 18.0.0
-- npm
-
-### Install from Source
+Requires Node.js >= 18.0.0 and npm.
 
 ```bash
 # Clone the repo
@@ -267,7 +260,7 @@ bash scripts/smoke-test.sh
 | `install.ps1` / `install.sh` | Standalone installer (downloads Node if needed) |
 | `scripts/local-install.ps1` / `.sh` | Build + npm link for dev testing |
 | `scripts/smoke-test.ps1` / `.sh` | 19 end-to-end CLI tests |
-| `scripts/setup-mcp.ps1` | Auto-configure `.vscode/mcp.json` for a project |
+| `scripts/setup-mcp.ps1` | Auto-configure MCP for a specific project |
 | `scripts/benchmark.mjs` | MCP server latency benchmark (11 tools, burst, cold start) |
 | `scripts/benchmark-agent.mjs` | Agent workflow benchmark — with vs without cgraph |
 | `scripts/benchmark-compare.mjs` | Raw efficiency comparison (grep+read vs cgraph) |
