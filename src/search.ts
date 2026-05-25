@@ -54,5 +54,29 @@ export function searchSymbols(
     });
   }
 
-  return results.slice(0, opts.limit ?? 20);
+  const limit = opts.limit ?? 20;
+
+  // Fuzzy fallback: if exact search returns fewer than 3 results, supplement with fuzzy
+  if (results.length < 3 && searchTerms && searchTerms !== '*') {
+    const seen = new Set(results.map(r => r.node.id));
+    const fuzzy = db.fuzzySearch(searchTerms, limit);
+    for (const fr of fuzzy) {
+      if (!seen.has(fr.node.id)) {
+        // Apply same filters
+        if (effectiveKind && fr.node.kind !== effectiveKind) continue;
+        if (effectiveFile && !fr.file_path.includes(effectiveFile)) continue;
+        if (parsed.lang) {
+          const fp = fr.file_path.toLowerCase();
+          const lang = parsed.lang;
+          if ((lang === 'typescript' || lang === 'ts') && !fp.endsWith('.ts') && !fp.endsWith('.tsx')) continue;
+          if ((lang === 'javascript' || lang === 'js') && !fp.endsWith('.js') && !fp.endsWith('.jsx') && !fp.endsWith('.mjs')) continue;
+          if ((lang === 'python' || lang === 'py') && !fp.endsWith('.py') && !fp.endsWith('.pyi')) continue;
+        }
+        results.push(fr);
+        seen.add(fr.node.id);
+      }
+    }
+  }
+
+  return results.slice(0, limit);
 }

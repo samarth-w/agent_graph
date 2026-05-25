@@ -14,11 +14,12 @@ import { indexProject } from './indexer';
 import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected } from './graph';
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
-import { getDbPath } from './config';
+import { getDbPath, DB_DIR } from './config';
 import { computeLimits } from './adaptive';
-import { toMermaid, toDot } from './export';
+import { toMermaid, toDot, toHtml } from './export';
 import { findChangedSymbols } from './git';
 import { LRUCache } from './cache';
+import { FileWatcher } from './watcher';
 import type { McpToolDef, McpToolResult } from './types';
 
 // ─── Input validation ──────────────────────────────────────────
@@ -176,7 +177,7 @@ const TOOLS: McpToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        format: { type: 'string', description: 'Output format', enum: ['mermaid', 'dot'], default: 'mermaid' },
+        format: { type: 'string', description: 'Output format', enum: ['mermaid', 'dot', 'html'], default: 'mermaid' },
         symbol: { type: 'string', description: 'Center the diagram on this symbol (omit for whole graph)' },
         depth: { type: 'number', description: 'Traversal depth from symbol (default: 4)', default: 4 },
         maxNodes: { type: 'number', description: 'Max nodes to include (default: 100)', default: 100 },
@@ -200,10 +201,10 @@ const TOOLS: McpToolDef[] = [
 // ─── Tool handler ──────────────────────────────────────────────
 class ToolHandler {
   private db: GraphDB | null = null;
-  private lastSyncTime = 0;
   private syncing = false;
   private cache = new LRUCache<McpToolResult>(64, 30_000);
-  private static SYNC_INTERVAL_MS = 60_000; // auto-sync every 60s
+  private watcher: FileWatcher | null = null;
+  private dirty = false; // set true by watcher, cleared after db swap
 
   constructor(private rootDir: string) {}
 
@@ -211,26 +212,40 @@ class ToolHandler {
     if (!this.db) {
       const dbPath = getDbPath(this.rootDir);
       if (!fs.existsSync(dbPath)) {
-        // Auto-index on first use — fire and forget
         await indexProject(this.rootDir);
-        this.lastSyncTime = Date.now();
       }
       this.db = await GraphDB.open(dbPath);
+
+      // Enable cache persistence
+      this.cache.enablePersistence(path.join(this.rootDir, DB_DIR, 'cache.json'));
+
+      // Start file watcher for incremental re-index
+      if (!this.watcher) {
+        this.watcher = new FileWatcher(this.rootDir, {
+          debounceMs: 1500,
+          onSync: async (result) => {
+            if (result.files_changed > 0) {
+              this.dirty = true;
+            }
+          },
+          onError: () => { /* ignore watch errors */ },
+        });
+        this.watcher.start();
+      }
     }
 
-    // Background sync: re-index changed files if enough time has passed
-    if (!this.syncing && Date.now() - this.lastSyncTime > ToolHandler.SYNC_INTERVAL_MS) {
-      this.lastSyncTime = Date.now();
+    // Swap to fresh db if watcher detected changes
+    if (this.dirty && !this.syncing) {
+      this.dirty = false;
       this.syncing = true;
-      // Re-index in background, then swap to fresh db
-      indexProject(this.rootDir).then(async () => {
+      try {
         const fresh = await GraphDB.open(getDbPath(this.rootDir));
         const old = this.db;
         this.db = fresh;
         old?.close();
-        this.cache.clear(); // invalidate cache after re-index
-        this.syncing = false;
-      }).catch(() => { this.syncing = false; });
+        this.cache.clear();
+      } catch { /* keep old db */ }
+      this.syncing = false;
     }
 
     return this.db;
@@ -533,7 +548,9 @@ class ToolHandler {
       maxNodes: args.maxNodes != null ? clamp(Number(args.maxNodes), 1, 500) : undefined,
       direction: args.direction as 'forward' | 'backward' | 'both' | undefined,
     };
-    const output = format === 'dot' ? toDot(db, exportOpts) : toMermaid(db, exportOpts);
+    const output = format === 'dot' ? toDot(db, exportOpts)
+      : format === 'html' ? toHtml(db, exportOpts)
+      : toMermaid(db, exportOpts);
     return this.textResult(output);
   }
 
@@ -572,6 +589,8 @@ class ToolHandler {
   }
 
   close(): void {
+    if (this.watcher) { this.watcher.stop(); this.watcher = null; }
+    this.cache.saveToDisk();
     if (this.db) { this.db.close(); this.db = null; }
   }
 }

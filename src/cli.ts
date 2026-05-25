@@ -15,7 +15,7 @@ import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DEFAULT_CONFIG } from './config';
 import { computeLimits } from './adaptive';
-import { toMermaid, toDot } from './export';
+import { toMermaid, toDot, toHtml } from './export';
 import { findChangedSymbols, getChangedFiles } from './git';
 import { startMcpServer } from './mcp';
 import { FileWatcher } from './watcher';
@@ -466,8 +466,8 @@ program
 // ── cgraph export ───────────────────────────────────────────────
 program
   .command('export')
-  .description('Export the code graph as Mermaid or DOT diagram')
-  .option('--format <fmt>', 'output format (mermaid|dot)', 'mermaid')
+  .description('Export the code graph as Mermaid, DOT, or interactive HTML diagram')
+  .option('--format <fmt>', 'output format (mermaid|dot|html)', 'mermaid')
   .option('--symbol <name>', 'center the diagram on this symbol')
   .option('--depth <n>', 'traversal depth from symbol', '4')
   .option('--limit <n>', 'max nodes to include', '100')
@@ -483,7 +483,9 @@ program
         maxNodes: parseInt(opts.limit, 10),
         direction: opts.direction as 'forward' | 'backward' | 'both',
       };
-      const output = opts.format === 'dot' ? toDot(db, exportOpts) : toMermaid(db, exportOpts);
+      const output = opts.format === 'dot' ? toDot(db, exportOpts)
+        : opts.format === 'html' ? toHtml(db, exportOpts)
+        : toMermaid(db, exportOpts);
       if (opts.output) {
         fs.writeFileSync(opts.output, output, 'utf-8');
         process.stdout.write(JSON.stringify({ file: opts.output, format: opts.format }) + '\n');

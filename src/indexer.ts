@@ -8,6 +8,8 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { Worker } from 'worker_threads';
+import os from 'os';
 import fg from 'fast-glob';
 import { GraphDB } from './storage';
 import { parseFile } from './parser';
@@ -61,6 +63,15 @@ export async function indexProject(
       relPath: string;
     }> = new Map();
 
+    // 3a. Collect files that need re-parsing (read content + upsert file records)
+    interface PendingFile {
+      fileId: number;
+      content: string;
+      language: string;
+      relNorm: string;
+    }
+    const pending: PendingFile[] = [];
+
     db.transaction(() => {
       for (const rel of filePaths) {
         const relNorm = normSlash(rel);
@@ -75,7 +86,6 @@ export async function indexProject(
           if (existing &&
               existing.mtime === stat.mtimeMs &&
               existing.size === stat.size) {
-            // unchanged — still collect raw_refs for edge resolution
             continue;
           }
         }
@@ -90,11 +100,31 @@ export async function indexProject(
 
         if (!changed && !opts.force) continue;
         filesChanged++;
+        pending.push({ fileId, content, language, relNorm });
+      }
+    });
 
-        // Parse
-        const result = parseFile(content, language, relNorm);
+    // 3b. Parse files (parallel with workers if enough files, else single-threaded)
+    const WORKER_THRESHOLD = 8;
+    const parseResults: Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }> = new Map();
 
+    if (pending.length >= WORKER_THRESHOLD) {
+      const results = await parseFilesParallel(pending);
+      for (const r of results) {
+        parseResults.set(r.fileId, r);
+      }
+    } else {
+      for (const p of pending) {
+        const result = parseFile(p.content, p.language, p.relNorm);
+        parseResults.set(p.fileId, { fileId: p.fileId, relNorm: p.relNorm, content: p.content, result });
+      }
+    }
+
+    // 3c. Store parse results in DB (single-threaded)
+    db.transaction(() => {
+      for (const [fileId, { relNorm, content, result }] of parseResults) {
         // Extract framework routes
+        const language = detectLanguage(relNorm) ?? '';
         const routes = extractRoutes(content, relNorm, language);
         for (const route of routes) {
           db.insertNode(
@@ -103,7 +133,6 @@ export async function indexProject(
             route.line, route.line,
             `${route.method} ${route.pattern}`, null, true,
           );
-          // Store a raw ref to link route → handler
           db.insertRawRef(fileId, 'call', `${relNorm}::route:${route.pattern}`,
             route.handler, null, null, route.line);
         }
@@ -353,12 +382,28 @@ function resolveTarget(
 function resolveModulePath(
   importerPath: string, moduleSpec: string,
 ): string | null {
-  if (!moduleSpec.startsWith('.')) return null; // external package
+  // C/C++ #include: "header.h" is project-relative, <system.h> was already stripped
+  // Shell source/.: resolve relative paths
+  // JS/TS: only relative imports (starting with .)
+  
+  // Skip system/external includes (no path separator, no relative prefix)
+  if (!moduleSpec.startsWith('.') && !moduleSpec.includes('/')) {
+    // Could be a C/C++ header in the same directory — try as-is
+    const dir = path.dirname(importerPath);
+    const candidate = normSlash(path.posix.join(dir, moduleSpec));
+    // Return it; edge resolver will check if the file exists in the index
+    if (moduleSpec.endsWith('.h') || moduleSpec.endsWith('.hpp') ||
+        moduleSpec.endsWith('.hh') || moduleSpec.endsWith('.hxx') ||
+        moduleSpec.endsWith('.sh') || moduleSpec.endsWith('.ps1') ||
+        moduleSpec.endsWith('.psm1')) {
+      return candidate;
+    }
+    return null; // external npm/pip package
+  }
+
   const dir = path.dirname(importerPath);
   let resolved = path.posix.join(dir, moduleSpec);
-  // Normalize
   resolved = normSlash(resolved);
-  // Try common extensions
   return resolved;
 }
 
@@ -389,4 +434,103 @@ function classifyRoles(db: GraphDB): void {
 // ─── util ───────────────────────────────────────────────────────
 function normSlash(p: string): string {
   return p.replace(/\\/g, '/');
+}
+
+// ─── Parallel parsing with worker threads ──────────────────────
+interface PendingFile {
+  fileId: number;
+  content: string;
+  language: string;
+  relNorm: string;
+}
+
+interface ParsedFileResult {
+  fileId: number;
+  relNorm: string;
+  content: string;
+  result: ReturnType<typeof parseFile>;
+}
+
+async function parseFilesParallel(files: PendingFile[]): Promise<ParsedFileResult[]> {
+  const cpuCount = Math.max(1, os.cpus().length - 1);
+  const workerCount = Math.min(cpuCount, files.length, 4);
+
+  // Resolve the worker script path (compiled JS, not TS)
+  const workerPath = path.resolve(__dirname, 'parse-worker.js');
+
+  // If worker file doesn't exist (e.g. dev mode), fall back to single-threaded
+  if (!fs.existsSync(workerPath)) {
+    return files.map(f => ({
+      fileId: f.fileId,
+      relNorm: f.relNorm,
+      content: f.content,
+      result: parseFile(f.content, f.language, f.relNorm),
+    }));
+  }
+
+  const results: ParsedFileResult[] = [];
+  const queue = [...files];
+
+  const spawnWorker = (): Promise<void> => new Promise((resolve, reject) => {
+    const worker = new Worker(workerPath);
+    const processNext = () => {
+      const item = queue.shift();
+      if (!item) {
+        worker.terminate();
+        resolve();
+        return;
+      }
+      worker.postMessage({
+        id: item.fileId,
+        content: item.content,
+        language: item.language,
+        relPath: item.relNorm,
+      });
+    };
+
+    worker.on('message', (msg: { id: number; result: any; error: string | null }) => {
+      if (msg.error) {
+        // On worker parse error, fallback to empty parse
+        const file = files.find(f => f.fileId === msg.id);
+        if (file) {
+          results.push({
+            fileId: msg.id,
+            relNorm: file.relNorm,
+            content: file.content,
+            result: { symbols: [], calls: [], imports: [] },
+          });
+        }
+      } else {
+        const file = files.find(f => f.fileId === msg.id);
+        if (file) {
+          results.push({
+            fileId: msg.id,
+            relNorm: file.relNorm,
+            content: file.content,
+            result: msg.result,
+          });
+        }
+      }
+      processNext();
+    });
+
+    worker.on('error', (err) => {
+      // Worker crashed — process remaining items single-threaded
+      while (queue.length) {
+        const item = queue.shift()!;
+        results.push({
+          fileId: item.fileId,
+          relNorm: item.relNorm,
+          content: item.content,
+          result: parseFile(item.content, item.language, item.relNorm),
+        });
+      }
+      resolve();
+    });
+
+    processNext();
+  });
+
+  await Promise.all(Array.from({ length: workerCount }, () => spawnWorker()));
+  return results;
 }

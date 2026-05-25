@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0] — 2026-05-25
+
+### New Features
+- **Interactive HTML export** — `cgraph export --format html` generates a standalone D3.js force-directed graph with zoom, drag, tooltips, and node coloring by kind/role
+- **Fuzzy search** — trigram + Levenshtein-based fuzzy matching automatically supplements exact search when few results are found; new `db.fuzzySearch()` API
+- **Persistent cache** — LRU cache persists to `.cgraph/cache.json`, loads on startup, invalidates on file changes via FileWatcher
+- **Parallel indexing** — files are parsed in parallel using `worker_threads` when ≥8 files need re-parsing (up to 4 workers), with graceful single-threaded fallback
+- **Incremental MCP re-index** — FileWatcher integration replaces 60s polling; dirty flag triggers DB swap on next query
+- **C/C++ cross-file #include resolution** — `resolveModulePath` handles bare header names, shell `source`/`.` imports, and PS1 dot-sourcing
+
+### Tests
+- 9 new tests for HTML export, fuzzy search, and persistent cache (140 total)
+
 ## [0.2.0] — 2026-05-25
 
 ### New Languages

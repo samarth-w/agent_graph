@@ -389,6 +389,51 @@ export class GraphDB {
     }).sort((a, b) => a.rank - b.rank).slice(0, limit);
   }
 
+  /**
+   * Fuzzy search using trigram similarity and Levenshtein distance.
+   * Useful when exact/substring matching returns too few results.
+   */
+  fuzzySearch(query: string, limit = 20, threshold = 0.3): SearchResult[] {
+    const q = query.toLowerCase().trim();
+    if (q.length === 0) return [];
+
+    const qTrigrams = trigrams(q);
+    if (qTrigrams.size === 0) return [];
+
+    // Fetch all node names (lightweight — only what we need for scoring)
+    const rows = this.all(
+      `SELECT n.*, f.path AS file_path FROM nodes n JOIN files f ON f.id = n.file_id`,
+      [],
+    );
+
+    const results: SearchResult[] = [];
+    for (const row of rows) {
+      const name = (row.name as string).toLowerCase();
+      const sim = trigramSimilarity(qTrigrams, trigrams(name));
+      if (sim < threshold) continue;
+
+      // Combine trigram similarity with Levenshtein distance for ranking
+      const lev = levenshtein(q, name);
+      const maxLen = Math.max(q.length, name.length);
+      const levScore = 1 - lev / maxLen; // 1 = identical, 0 = completely different
+      const combined = sim * 0.6 + levScore * 0.4;
+
+      results.push({
+        node: {
+          id: row.id, file_id: row.file_id, name: row.name,
+          qualified_name: row.qualified_name, kind: row.kind,
+          start_line: row.start_line, end_line: row.end_line,
+          signature: row.signature, doc: row.doc,
+          exported: row.exported, role: row.role,
+        },
+        file_path: row.file_path as string,
+        rank: -combined,
+      });
+    }
+
+    return results.sort((a, b) => a.rank - b.rank).slice(0, limit);
+  }
+
   // -- stats ---------------------------------------------------------
   getStatus(rootDir: string): StatusInfo {
     const cnt = (sql: string) => {
@@ -445,4 +490,42 @@ export class GraphDB {
     this.save();
     this.db.close();
   }
+}
+
+// ── Fuzzy-search helpers ───────────────────────────────────────────
+
+/** Generate the set of trigrams for a string. */
+function trigrams(s: string): Set<string> {
+  const set = new Set<string>();
+  const padded = `  ${s} `;
+  for (let i = 0; i < padded.length - 2; i++) {
+    set.add(padded.slice(i, i + 3));
+  }
+  return set;
+}
+
+/** Jaccard similarity between two trigram sets (0..1). */
+function trigramSimilarity(a: Set<string>, b: Set<string>): number {
+  let intersection = 0;
+  for (const t of a) if (b.has(t)) intersection++;
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/** Levenshtein edit distance between two strings. */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array<number>(n + 1);
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
 }
