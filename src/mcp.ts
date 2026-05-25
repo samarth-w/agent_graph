@@ -173,7 +173,7 @@ const TOOLS: McpToolDef[] = [
   },
   {
     name: 'cgraph_export',
-    description: 'Export the code graph as a Mermaid or DOT (Graphviz) diagram. Optionally scope to a symbol and its neighborhood.',
+    description: 'Export the code graph as a Mermaid, DOT (Graphviz), or interactive HTML (D3.js) diagram. Optionally scope to a symbol and its neighborhood.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -542,6 +542,10 @@ class ToolHandler {
   private async handleExport(args: Record<string, unknown>): Promise<McpToolResult> {
     const db = await this.getDb();
     const format = (args.format as string) || 'mermaid';
+    const validFormats = ['mermaid', 'dot', 'html'];
+    if (!validFormats.includes(format)) {
+      return this.errorResult(`Invalid format "${format}". Must be one of: ${validFormats.join(', ')}`);
+    }
     const exportOpts = {
       symbol: args.symbol as string | undefined,
       maxDepth: args.depth != null ? clamp(Number(args.depth), 1, 10) : undefined,

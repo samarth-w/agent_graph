@@ -71,6 +71,9 @@ export function searchSymbols(
           if ((lang === 'typescript' || lang === 'ts') && !fp.endsWith('.ts') && !fp.endsWith('.tsx')) continue;
           if ((lang === 'javascript' || lang === 'js') && !fp.endsWith('.js') && !fp.endsWith('.jsx') && !fp.endsWith('.mjs')) continue;
           if ((lang === 'python' || lang === 'py') && !fp.endsWith('.py') && !fp.endsWith('.pyi')) continue;
+          if ((lang === 'c' || lang === 'cpp' || lang === 'c++') && !fp.endsWith('.c') && !fp.endsWith('.h') && !fp.endsWith('.cpp') && !fp.endsWith('.hpp') && !fp.endsWith('.cc') && !fp.endsWith('.cxx')) continue;
+          if ((lang === 'shell' || lang === 'bash' || lang === 'sh') && !fp.endsWith('.sh') && !fp.endsWith('.bash') && !fp.endsWith('.zsh')) continue;
+          if ((lang === 'powershell' || lang === 'ps1') && !fp.endsWith('.ps1') && !fp.endsWith('.psm1')) continue;
         }
         results.push(fr);
         seen.add(fr.node.id);

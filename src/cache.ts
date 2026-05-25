@@ -68,6 +68,17 @@ export class LRUCache<T = string> {
     this.saveToDisk();
   }
 
+  /** Check if a key exists and is not expired, without affecting LRU order. */
+  has(key: string): boolean {
+    const entry = this.cache.get(key);
+    if (!entry) return false;
+    if (Date.now() - entry.timestamp > this.ttlMs) {
+      this.cache.delete(key);
+      return false;
+    }
+    return true;
+  }
+
   get size(): number {
     return this.cache.size;
   }
