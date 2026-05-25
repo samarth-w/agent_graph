@@ -5,7 +5,7 @@
  */
 import { GraphDB } from './storage';
 import { parseQuery } from './query-parser';
-import type { SearchResult, ParsedQuery } from './types';
+import type { SearchResult, ParsedQuery, IntentSearchResult, IntentMatch } from './types';
 
 export function searchSymbols(
   db: GraphDB,
@@ -105,4 +105,108 @@ export function searchSymbols(
   }
 
   return results.slice(0, limit);
+}
+
+// ─── BM25 Intent Search ────────────────────────────────────────
+
+/** Tokenize text: split on space, camelCase, snake_case, punctuation */
+function tokenize(text: string): string[] {
+  return text
+    .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase
+    .replace(/[_\-./:\\(){}[\]<>,;'"=+]/g, ' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(t => t.length >= 2);
+}
+
+export function intentSearch(
+  db: GraphDB,
+  query: string,
+  opts: { limit?: number; kind?: string } = {},
+): IntentSearchResult {
+  const limit = opts.limit ?? 20;
+  const queryTerms = tokenize(query);
+  if (queryTerms.length === 0) return { results: [], total: 0, query_terms: [] };
+
+  const allNodes = db.getAllNodes();
+  const N = allNodes.length;
+  if (N === 0) return { results: [], total: 0, query_terms: queryTerms };
+
+  // Build document for each node
+  const docs: { node: typeof allNodes[0]; tokens: string[]; filePath: string }[] = [];
+  for (const node of allNodes) {
+    if (opts.kind && node.kind !== opts.kind) continue;
+    const f = db.getFileById(node.file_id);
+    const fp = f?.path ?? '';
+
+    // Build document from name + qualified_name + signature + doc + caller/callee names
+    const parts = [node.name, node.qualified_name, node.signature ?? '', node.doc ?? ''];
+    const callers = db.getEdgesTo(node.id, 'calls').slice(0, 5);
+    for (const e of callers) {
+      const n = db.getNode(e.source_id);
+      if (n) parts.push(n.name);
+    }
+    const callees = db.getEdgesFrom(node.id, 'calls').slice(0, 5);
+    for (const e of callees) {
+      const n = db.getNode(e.target_id);
+      if (n) parts.push(n.name);
+    }
+
+    docs.push({ node, tokens: tokenize(parts.join(' ')), filePath: fp });
+  }
+
+  // Compute document frequencies per term
+  const df = new Map<string, number>();
+  for (const term of queryTerms) {
+    let count = 0;
+    for (const doc of docs) {
+      if (doc.tokens.includes(term)) count++;
+    }
+    df.set(term, count);
+  }
+
+  // Avg document length
+  const avgDl = docs.reduce((s, d) => s + d.tokens.length, 0) / (docs.length || 1);
+  const k1 = 1.2;
+  const b = 0.75;
+
+  // Score each document
+  const scored: IntentMatch[] = [];
+  for (const doc of docs) {
+    let score = 0;
+    const matched: string[] = [];
+
+    for (const term of queryTerms) {
+      const termDf = df.get(term) || 0;
+      if (termDf === 0) continue;
+      const tf = doc.tokens.filter(t => t === term).length;
+      if (tf === 0) continue;
+
+      matched.push(term);
+      const idf = Math.log((docs.length - termDf + 0.5) / (termDf + 0.5) + 1);
+      const dl = doc.tokens.length;
+      const tfScore = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / avgDl));
+      score += idf * tfScore;
+    }
+
+    if (score > 0) {
+      scored.push({
+        name: doc.node.name,
+        qualified_name: doc.node.qualified_name,
+        kind: doc.node.kind,
+        file: doc.filePath,
+        line: doc.node.start_line,
+        signature: doc.node.signature,
+        score: Math.round(score * 1000) / 1000,
+        matched_terms: matched,
+      });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return {
+    results: scored.slice(0, limit),
+    total: scored.length,
+    query_terms: queryTerms,
+  };
 }

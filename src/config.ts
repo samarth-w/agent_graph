@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { GraphConfig } from './types';
+import type { GraphConfig, LintRule } from './types';
 
 export const CONFIG_FILE = '.cgraph.json';
 
@@ -95,6 +95,15 @@ export function loadConfig(rootDir: string): GraphConfig {
     if (typeof raw.maxSnippetLines === 'number') merged.maxSnippetLines = raw.maxSnippetLines;
     if (Array.isArray(raw.ignorePaths)) merged.ignorePaths = raw.ignorePaths.filter((p: unknown) => typeof p === 'string');
     if (Array.isArray(raw.extensions)) merged.extensions = raw.extensions.filter((e: unknown) => typeof e === 'string');
+    if (Array.isArray(raw.rules)) {
+      const validTypes = new Set(['deny-dependency', 'max-fan-out', 'no-cycles', 'max-file-symbols']);
+      const validSeverities = new Set(['error', 'warn']);
+      merged.rules = raw.rules.filter((r: any) =>
+        r && typeof r === 'object' &&
+        validTypes.has(r.type) &&
+        validSeverities.has(r.severity),
+      ) as LintRule[];
+    }
     return merged;
   } catch {
     return { ...DEFAULT_CONFIG };

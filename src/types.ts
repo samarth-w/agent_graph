@@ -193,6 +193,7 @@ export interface GraphConfig {
   maxSnippetLines: number;
   ignorePaths: string[];
   extensions: string[];
+  rules?: LintRule[];
 }
 
 // ─── Trace (path finding) ──────────────────────────────────────
@@ -316,4 +317,99 @@ export interface ParsedRoute {
   handler: string;       // handler function/class name
   line: number;
   framework: string;     // express, react-router, django, flask, fastapi, nextjs
+}
+
+// ─── Auto Context (warm-start file awareness) ──────────────────
+export interface AutoContextResult {
+  file: string;
+  language: string;
+  symbols: AutoContextSymbol[];
+  related_tests: string[];
+  imports_from: string[];
+  imported_by: string[];
+  stats: { total: number; exported: number; roles: Record<string, number> };
+}
+
+export interface AutoContextSymbol {
+  name: string;
+  kind: string;
+  role: string | null;
+  line: number;
+  exported: boolean;
+  callers: { name: string; file: string }[];
+  callees: { name: string; file: string }[];
+}
+
+// ─── Intent Search (BM25) ──────────────────────────────────────
+export interface IntentSearchResult {
+  results: IntentMatch[];
+  total: number;
+  query_terms: string[];
+}
+
+export interface IntentMatch {
+  name: string;
+  qualified_name: string;
+  kind: string;
+  file: string;
+  line: number;
+  signature: string | null;
+  score: number;
+  matched_terms: string[];
+}
+
+// ─── Plan Validation (change risk assessment) ──────────────────
+export interface PlanValidation {
+  targets: string[];
+  risk_level: 'low' | 'medium' | 'high';
+  risk_score: number;
+  impacted_symbols: { name: string; file: string; depth: number }[];
+  impacted_files: string[];
+  affected_tests: string[];
+  warnings: string[];
+  cycle_risks: string[];
+}
+
+// ─── Architecture Lint ─────────────────────────────────────────
+export interface LintRule {
+  type: 'deny-dependency' | 'max-fan-out' | 'no-cycles' | 'max-file-symbols';
+  from?: string;
+  to?: string;
+  max?: number;
+  scope?: string;
+  severity: 'error' | 'warn';
+  message?: string;
+}
+
+export interface LintViolation {
+  rule: LintRule;
+  symbol?: string;
+  file?: string;
+  detail: string;
+}
+
+export interface LintResult {
+  passed: boolean;
+  violations: LintViolation[];
+  errors: number;
+  warnings: number;
+  summary: string;
+}
+
+// ─── Codebase DNA (fingerprint) ────────────────────────────────
+export interface CodebaseDNA {
+  languages: { lang: string; files: number; percentage: number }[];
+  frameworks: string[];
+  architecture_style: string;
+  health: {
+    modularity: number;
+    dead_code: number;
+    test_coverage: number;
+    complexity: number;
+    overall: number;
+  };
+  size: { files: number; symbols: number; edges: number };
+  role_distribution: Record<string, number>;
+  key_hubs: { name: string; file: string; fan_in: number; fan_out: number }[];
+  summary: string;
 }

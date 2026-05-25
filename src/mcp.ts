@@ -11,10 +11,11 @@ import path from 'path';
 import readline from 'readline';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings } from './graph';
-import { searchSymbols } from './search';
+import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings, getAutoContext, validatePlan, getCodebaseDNA } from './graph';
+import { searchSymbols, intentSearch } from './search';
 import { buildContext, explore } from './context';
-import { getDbPath, DB_DIR } from './config';
+import { getDbPath, DB_DIR, loadConfig } from './config';
+import { lintArchitecture } from './lint';
 import { computeLimits } from './adaptive';
 import { toMermaid, toDot, toHtml } from './export';
 import { findChangedSymbols } from './git';
@@ -241,6 +242,57 @@ const TOOLS: McpToolDef[] = [
       },
     },
   },
+  {
+    name: 'cgraph_auto_context',
+    description: 'Warm-start file awareness: returns all symbols in a file with their callers, callees, related test files, and import graph. Call this first when an agent opens a file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'File path to get context for' },
+      },
+      required: ['file'],
+    },
+  },
+  {
+    name: 'cgraph_intent_search',
+    description: 'Search symbols by natural language intent (e.g. "validate user email") using BM25 ranking over symbol names, signatures, docs, and call relationships.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Natural language description of what you are looking for' },
+        kind: { type: 'string', description: 'Filter by symbol kind' },
+        limit: { type: 'number', description: 'Max results (default: 20)', default: 20 },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'cgraph_validate_plan',
+    description: 'Pre-flight change risk assessment. Given symbols or files you plan to modify, returns blast radius, affected tests, cycle risks, and a risk score (low/medium/high).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbols: { type: 'string', description: 'Comma-separated symbol names to change' },
+        files: { type: 'string', description: 'Comma-separated file paths to change' },
+      },
+    },
+  },
+  {
+    name: 'cgraph_lint',
+    description: 'Check architecture rules defined in .cgraph.json (deny-dependency, max-fan-out, no-cycles, max-file-symbols). Returns violations with severity.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'cgraph_dna',
+    description: 'Codebase fingerprint: languages, frameworks, architecture style, health scores (modularity, dead code, test coverage, complexity), key hubs, and a natural language summary. One call gives full codebase awareness.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
 ];
 
 // ─── Tool handler ──────────────────────────────────────────────
@@ -308,6 +360,7 @@ class ToolHandler {
     'cgraph_search', 'cgraph_callers', 'cgraph_callees', 'cgraph_impact',
     'cgraph_node', 'cgraph_trace', 'cgraph_files', 'cgraph_status', 'cgraph_export',
     'cgraph_deadcode', 'cgraph_cycles', 'cgraph_stats', 'cgraph_suggest',
+    'cgraph_auto_context', 'cgraph_intent_search', 'cgraph_validate_plan', 'cgraph_lint', 'cgraph_dna',
   ]);
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
@@ -339,6 +392,11 @@ class ToolHandler {
         case 'cgraph_cycles': result = await this.handleCycles(args); break;
         case 'cgraph_stats': result = await this.handleStats(args); break;
         case 'cgraph_suggest': result = await this.handleSuggest(args); break;
+        case 'cgraph_auto_context': result = await this.handleAutoContext(args); break;
+        case 'cgraph_intent_search': result = await this.handleIntentSearch(args); break;
+        case 'cgraph_validate_plan': result = await this.handleValidatePlan(args); break;
+        case 'cgraph_lint': result = await this.handleLint(args); break;
+        case 'cgraph_dna': result = await this.handleDna(args); break;
         default:
           return this.errorResult(`Unknown tool: ${toolName}`);
       }
@@ -730,6 +788,112 @@ class ToolHandler {
       lines.push(s.reason);
       lines.push('');
     }
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleAutoContext(args: Record<string, unknown>): Promise<McpToolResult> {
+    const file = validateString(args.file, 'file');
+    const db = await this.getDb();
+    const result = getAutoContext(db, file);
+    if (result.symbols.length === 0) return this.textResult(`No symbols found in ${file}`);
+    const lines = [`## Auto Context: ${result.file}`, `Language: ${result.language}`, ''];
+    lines.push(`**${result.stats.total} symbols** (${result.stats.exported} exported)`, '');
+    for (const s of result.symbols) {
+      const exp = s.exported ? ' [exported]' : '';
+      lines.push(`### ${s.name} (${s.kind})${exp} — L${s.line}`);
+      if (s.role) lines.push(`Role: ${s.role}`);
+      if (s.callers.length) lines.push(`Callers: ${s.callers.map(c => `${c.name} (${c.file})`).join(', ')}`);
+      if (s.callees.length) lines.push(`Callees: ${s.callees.map(c => `${c.name} (${c.file})`).join(', ')}`);
+      lines.push('');
+    }
+    if (result.related_tests.length) lines.push(`**Related tests:** ${result.related_tests.join(', ')}`, '');
+    if (result.imports_from.length) lines.push(`**Imports from:** ${result.imports_from.join(', ')}`);
+    if (result.imported_by.length) lines.push(`**Imported by:** ${result.imported_by.join(', ')}`);
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleIntentSearch(args: Record<string, unknown>): Promise<McpToolResult> {
+    const query = validateString(args.query, 'query');
+    const db = await this.getDb();
+    const result = intentSearch(db, query, {
+      limit: args.limit != null ? clamp(Number(args.limit), 1, 100) : undefined,
+      kind: args.kind as string | undefined,
+    });
+    if (result.total === 0) return this.textResult(`No results for intent: "${query}"`);
+    const lines = [`## Intent Search: "${query}"`, `Terms: ${result.query_terms.join(', ')}`, `${result.total} matches`, ''];
+    for (const m of result.results) {
+      lines.push(`- **${m.name}** (${m.kind}) — ${m.file}:${m.line} [score: ${m.score}]`);
+      if (m.signature) lines.push(`  ${m.signature}`);
+      lines.push(`  Matched: ${m.matched_terms.join(', ')}`);
+    }
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleValidatePlan(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const symbols = typeof args.symbols === 'string' ? args.symbols.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+    const files = typeof args.files === 'string' ? args.files.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+    if (!symbols?.length && !files?.length) return this.errorResult('Provide symbols or files to validate');
+    const result = validatePlan(db, { symbols, files });
+    const icon = result.risk_level === 'low' ? '🟢' : result.risk_level === 'medium' ? '🟡' : '🔴';
+    const lines = [`## Plan Validation ${icon}`, '', `**Risk: ${result.risk_level.toUpperCase()}** (score: ${result.risk_score})`, `Targets: ${result.targets.join(', ')}`, ''];
+    lines.push(`### Impact: ${result.impacted_symbols.length} symbols across ${result.impacted_files.length} files`, '');
+    for (const s of result.impacted_symbols.slice(0, 20)) {
+      lines.push(`- ${s.name} (${s.file}) depth=${s.depth}`);
+    }
+    if (result.affected_tests.length) {
+      lines.push('', `### Tests to re-run (${result.affected_tests.length})`);
+      for (const t of result.affected_tests) lines.push(`- ${t}`);
+    }
+    if (result.warnings.length) {
+      lines.push('', '### ⚠️ Warnings');
+      for (const w of result.warnings) lines.push(`- ${w}`);
+    }
+    if (result.cycle_risks.length) {
+      lines.push('', '### 🔄 Cycle Risks');
+      for (const c of result.cycle_risks) lines.push(`- ${c}`);
+    }
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleLint(_args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const config = loadConfig(this.rootDir);
+    const rules = config.rules ?? [];
+    if (rules.length === 0) return this.textResult('No architecture rules defined in .cgraph.json');
+    const result = lintArchitecture(db, rules);
+    const icon = result.passed ? '✅' : '❌';
+    const lines = [`## Architecture Lint ${icon}`, '', result.summary, ''];
+    for (const v of result.violations) {
+      const sev = v.rule.severity === 'error' ? '❌' : '⚠️';
+      lines.push(`${sev} **${v.rule.type}**${v.symbol ? ` — ${v.symbol}` : ''}${v.file ? ` (${v.file})` : ''}`);
+      lines.push(`  ${v.detail}`);
+    }
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleDna(_args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const dna = getCodebaseDNA(db);
+    const lines = [
+      '## Codebase DNA', '',
+      `**Architecture:** ${dna.architecture_style}`,
+      `**Size:** ${dna.size.files} files, ${dna.size.symbols} symbols, ${dna.size.edges} edges`, '',
+      '### Languages',
+      ...dna.languages.map(l => `- ${l.lang}: ${l.files} files (${l.percentage}%)`),
+    ];
+    if (dna.frameworks.length) lines.push('', `**Frameworks:** ${dna.frameworks.join(', ')}`);
+    lines.push('', '### Health Scores (0-100)',
+      `- Modularity: **${dna.health.modularity}**`,
+      `- Dead Code: **${dna.health.dead_code}**`,
+      `- Test Coverage: **${dna.health.test_coverage}**`,
+      `- Complexity: **${dna.health.complexity}**`,
+      `- **Overall: ${dna.health.overall}**`);
+    if (dna.key_hubs.length) {
+      lines.push('', '### Key Hubs');
+      for (const h of dna.key_hubs) lines.push(`- ${h.name} (${h.file}) — fan_in:${h.fan_in} fan_out:${h.fan_out}`);
+    }
+    lines.push('', '### Summary', dna.summary);
     return this.textResult(lines.join('\n'));
   }
 

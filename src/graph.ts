@@ -10,6 +10,7 @@ import { GraphDB } from './storage';
 import type {
   NodeRecord, EdgeRecord, TraverseOptions, TraverseResult, EdgeKind,
   TraceResult, TraceHop, NodeDetail, TrailEntry, FileInfo,
+  AutoContextResult, AutoContextSymbol, PlanValidation, CodebaseDNA,
 } from './types';
 
 // ─── BFS traversal ──────────────────────────────────────────────
@@ -858,5 +859,247 @@ export function suggestRefactorings(
   return {
     suggestions: deduped.slice(0, limit),
     total: deduped.length,
+  };
+}
+
+// ─── Auto Context (warm-start file awareness) ──────────────────
+export function getAutoContext(db: GraphDB, filePath: string): AutoContextResult {
+  const file = db.getFile(filePath);
+  if (!file) {
+    return { file: filePath, language: '', symbols: [], related_tests: [], imports_from: [], imported_by: [], stats: { total: 0, exported: 0, roles: {} } };
+  }
+
+  const nodes = db.getNodesForFile(file.id);
+  const testRe = /\.(test|spec|e2e)\.(ts|tsx|js|jsx|py)$|__tests?__\//i;
+  const allFiles = db.getAllFiles();
+
+  // Build symbols with top callers/callees
+  const symbols: AutoContextSymbol[] = [];
+  const roles: Record<string, number> = {};
+  let exported = 0;
+
+  for (const node of nodes) {
+    if (node.exported) exported++;
+    if (node.role) roles[node.role] = (roles[node.role] || 0) + 1;
+
+    const callersRaw = db.getEdgesTo(node.id, 'calls');
+    const calleesRaw = db.getEdgesFrom(node.id, 'calls');
+
+    const callers = callersRaw.slice(0, 5).map(e => {
+      const n = db.getNode(e.source_id);
+      const f = n ? db.getFileById(n.file_id) : undefined;
+      return { name: n?.name ?? '?', file: f?.path ?? '' };
+    });
+    const callees = calleesRaw.slice(0, 5).map(e => {
+      const n = db.getNode(e.target_id);
+      const f = n ? db.getFileById(n.file_id) : undefined;
+      return { name: n?.name ?? '?', file: f?.path ?? '' };
+    });
+
+    symbols.push({
+      name: node.name,
+      kind: node.kind,
+      role: node.role,
+      line: node.start_line,
+      exported: !!node.exported,
+      callers,
+      callees,
+    });
+  }
+
+  // Find related test files
+  const baseName = path.basename(filePath).replace(/\.[^.]+$/, '');
+  const related_tests = allFiles
+    .filter(f => testRe.test(f.path) && f.path.includes(baseName))
+    .map(f => f.path);
+
+  // File-level imports_from / imported_by
+  const importsFrom = new Set<string>();
+  const importedBy = new Set<string>();
+  for (const node of nodes) {
+    for (const e of db.getEdgesFrom(node.id, 'imports')) {
+      const t = db.getNode(e.target_id);
+      if (t) { const f = db.getFileById(t.file_id); if (f && f.id !== file.id) importsFrom.add(f.path); }
+    }
+    for (const e of db.getEdgesTo(node.id, 'imports')) {
+      const s = db.getNode(e.source_id);
+      if (s) { const f = db.getFileById(s.file_id); if (f && f.id !== file.id) importedBy.add(f.path); }
+    }
+  }
+
+  return {
+    file: filePath,
+    language: file.language,
+    symbols,
+    related_tests,
+    imports_from: [...importsFrom],
+    imported_by: [...importedBy],
+    stats: { total: nodes.length, exported, roles },
+  };
+}
+
+// ─── Plan Validation (change risk assessment) ──────────────────
+export function validatePlan(
+  db: GraphDB,
+  changes: { symbols?: string[]; files?: string[] },
+): PlanValidation {
+  const targets: string[] = [];
+  const impactedSet = new Map<number, { name: string; file: string; depth: number }>();
+  const impactedFiles = new Set<string>();
+  const affectedTests = new Set<string>();
+  const warnings: string[] = [];
+  const cycleRisks: string[] = [];
+  const testRe = /\.(test|spec|e2e)\.(ts|tsx|js|jsx|py)$|__tests?__\//i;
+
+  // Collect target node IDs
+  const targetNodes: NodeRecord[] = [];
+  for (const sym of changes.symbols ?? []) {
+    targets.push(sym);
+    const matches = db.findNodesByName(sym);
+    targetNodes.push(...matches);
+  }
+  for (const fp of changes.files ?? []) {
+    targets.push(fp);
+    const file = db.getFile(fp);
+    if (file) targetNodes.push(...db.getNodesForFile(file.id));
+  }
+
+  // Impact analysis for each target
+  for (const node of targetNodes) {
+    const result = traverse(db, node.id, {
+      maxDepth: 3,
+      maxNodes: 50,
+      direction: 'backward',
+      edgeKinds: ['calls', 'imports'],
+    });
+    for (const n of result.nodes) {
+      if (!impactedSet.has(n.id)) {
+        impactedSet.set(n.id, { name: n.name, file: n.file_path, depth: n.depth });
+        impactedFiles.add(n.file_path);
+        if (testRe.test(n.file_path)) affectedTests.add(n.file_path);
+      }
+    }
+    if (result.truncated) warnings.push(`Impact of ${node.name} was truncated (large blast radius)`);
+  }
+
+  // Check for cycles involving targets
+  const cycleResult = findCycles(db, { maxCycles: 10 });
+  for (const cycle of cycleResult.cycles) {
+    for (const node of targetNodes) {
+      if (cycle.path.includes(node.qualified_name)) {
+        cycleRisks.push(`${node.name} is in a cycle: ${cycle.path.join(' → ')}`);
+        break;
+      }
+    }
+  }
+
+  // Hub warnings
+  for (const node of targetNodes) {
+    const fanIn = db.getEdgesTo(node.id, 'calls').length;
+    if (fanIn >= 5) warnings.push(`${node.name} has ${fanIn} callers — high-impact change`);
+  }
+
+  const riskScore = impactedSet.size;
+  const risk_level = riskScore <= 5 ? 'low' : riskScore <= 20 ? 'medium' : 'high';
+
+  return {
+    targets,
+    risk_level,
+    risk_score: riskScore,
+    impacted_symbols: [...impactedSet.values()].sort((a, b) => a.depth - b.depth),
+    impacted_files: [...impactedFiles],
+    affected_tests: [...affectedTests],
+    warnings,
+    cycle_risks: cycleRisks,
+  };
+}
+
+// ─── Codebase DNA (fingerprint) ────────────────────────────────
+export function getCodebaseDNA(db: GraphDB): CodebaseDNA {
+  const allFiles = db.getAllFiles();
+  const allNodes = db.getAllNodes();
+  const allEdges = db.getAllEdges();
+
+  // Language distribution
+  const langCounts = new Map<string, number>();
+  for (const f of allFiles) langCounts.set(f.language, (langCounts.get(f.language) || 0) + 1);
+  const languages = [...langCounts.entries()]
+    .map(([lang, files]) => ({ lang, files, percentage: Math.round(files / allFiles.length * 100) }))
+    .sort((a, b) => b.files - a.files);
+
+  // Frameworks from route nodes
+  const frameworks = new Set<string>();
+  for (const n of allNodes) {
+    if (n.kind === 'route') {
+      const parts = n.qualified_name.split('::');
+      if (parts.length > 1) frameworks.add(parts[0]);
+    }
+  }
+
+  // Architecture style heuristic
+  const dirs = new Set(allFiles.map(f => f.path.split('/')[0]));
+  const allDirs = new Set(allFiles.map(f => { const p = f.path.split('/'); return p.length > 1 ? p.slice(0, -1).join('/') : ''; }));
+  const dirNames = [...allDirs].map(d => d.split('/').pop()?.toLowerCase() ?? '');
+  let architecture_style = 'flat';
+  const layeredDirs = ['services', 'controllers', 'models', 'routes', 'middleware', 'handlers', 'repositories'];
+  const componentDirs = ['components', 'pages', 'features', 'views', 'screens', 'widgets'];
+  const layeredScore = layeredDirs.filter(d => dirNames.includes(d)).length;
+  const componentScore = componentDirs.filter(d => dirNames.includes(d)).length;
+  if (layeredScore >= 2) architecture_style = 'layered (MVC / service-oriented)';
+  else if (componentScore >= 2) architecture_style = 'component-based';
+  else if (dirs.size <= 2) architecture_style = 'monolith';
+  else architecture_style = 'modular';
+
+  // Role distribution
+  const roleDist: Record<string, number> = {};
+  for (const n of allNodes) {
+    const r = n.role ?? 'unknown';
+    roleDist[r] = (roleDist[r] || 0) + 1;
+  }
+
+  // Health scores (0-100)
+  const cycleResult = findCycles(db, { maxCycles: 50 });
+  const deadCount = allNodes.filter(n => n.role === 'dead').length;
+  const testRe = /\.(test|spec|e2e)\.(ts|tsx|js|jsx|py)$|__tests?__\//i;
+  const testFiles = allFiles.filter(f => testRe.test(f.path)).length;
+  const sourceFiles = allFiles.length - testFiles;
+  const godCount = allNodes.filter(n => {
+    return db.getEdgesFrom(n.id, 'calls').length >= 10;
+  }).length;
+
+  const modularity = Math.max(0, Math.min(100, 100 - cycleResult.total * 10));
+  const dead_code = allNodes.length > 0 ? Math.max(0, Math.min(100, 100 - Math.round(deadCount / allNodes.length * 200))) : 100;
+  const test_coverage = sourceFiles > 0 ? Math.min(100, Math.round(testFiles / sourceFiles * 100)) : 0;
+  const complexity = allNodes.length > 0 ? Math.max(0, Math.min(100, 100 - Math.round(godCount / allNodes.length * 1000))) : 100;
+  const overall = Math.round((modularity + dead_code + test_coverage + complexity) / 4);
+
+  // Key hubs
+  const key_hubs = allNodes
+    .map(n => ({
+      name: n.name,
+      file: db.getFileById(n.file_id)?.path ?? '',
+      fan_in: db.getEdgesTo(n.id, 'calls').length,
+      fan_out: db.getEdgesFrom(n.id, 'calls').length,
+    }))
+    .filter(h => h.fan_in >= 3 || h.fan_out >= 5)
+    .sort((a, b) => (b.fan_in + b.fan_out) - (a.fan_in + a.fan_out))
+    .slice(0, 10);
+
+  // Summary
+  const primaryLang = languages[0]?.lang ?? 'unknown';
+  const summary = `${primaryLang}-dominant codebase with ${allFiles.length} files, ${allNodes.length} symbols, and ${allEdges.length} edges. ` +
+    `Architecture style: ${architecture_style}. ` +
+    `Health: modularity ${modularity}/100, dead code ${dead_code}/100, test coverage ${test_coverage}/100, complexity ${complexity}/100 (overall ${overall}/100). ` +
+    `${cycleResult.total} circular dependencies detected. ${deadCount} dead symbols. ${key_hubs.length} hub functions.`;
+
+  return {
+    languages,
+    frameworks: [...frameworks],
+    architecture_style,
+    health: { modularity, dead_code, test_coverage, complexity, overall },
+    size: { files: allFiles.length, symbols: allNodes.length, edges: allEdges.length },
+    role_distribution: roleDist,
+    key_hubs,
+    summary,
   };
 }

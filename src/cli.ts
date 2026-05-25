@@ -10,10 +10,11 @@ import path from 'path';
 import fs from 'fs';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings } from './graph';
-import { searchSymbols } from './search';
+import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings, getAutoContext, validatePlan, getCodebaseDNA } from './graph';
+import { searchSymbols, intentSearch } from './search';
 import { buildContext, explore } from './context';
-import { getDbPath, DEFAULT_CONFIG } from './config';
+import { getDbPath, DEFAULT_CONFIG, loadConfig } from './config';
+import { lintArchitecture } from './lint';
 import { computeLimits } from './adaptive';
 import { toMermaid, toDot, toHtml } from './export';
 import { findChangedSymbols, getChangedFiles } from './git';
@@ -682,6 +683,94 @@ program
     } finally {
       db.close();
     }
+  });
+
+// ── cgraph auto-context ─────────────────────────────────────────
+program
+  .command('auto-context')
+  .description('Warm-start file awareness: symbols, callers, callees, tests, imports')
+  .argument('<file>', 'file path to analyze')
+  .option('--json', 'output raw JSON')
+  .action(async (file: string, opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const result = getAutoContext(db, file);
+      if (opts.json) { out(result); } else { out(result, true); }
+    } finally { db.close(); }
+  });
+
+// ── cgraph intent ───────────────────────────────────────────────
+program
+  .command('intent')
+  .description('Search symbols by natural language intent (BM25 ranking)')
+  .argument('<query>', 'natural language description')
+  .option('--kind <kind>', 'filter by symbol kind')
+  .option('--limit <n>', 'max results', '20')
+  .option('--json', 'output raw JSON')
+  .action(async (query: string, opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const result = intentSearch(db, query, {
+        kind: opts.kind,
+        limit: parseInt(opts.limit, 10),
+      });
+      if (opts.json) { out(result); } else { out(result, true); }
+    } finally { db.close(); }
+  });
+
+// ── cgraph validate ─────────────────────────────────────────────
+program
+  .command('validate')
+  .description('Pre-flight change risk assessment: blast radius, tests, cycles')
+  .option('--symbols <names>', 'comma-separated symbol names')
+  .option('--files <paths>', 'comma-separated file paths')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const symbols = opts.symbols ? opts.symbols.split(',').map((s: string) => s.trim()) : undefined;
+      const files = opts.files ? opts.files.split(',').map((s: string) => s.trim()) : undefined;
+      const result = validatePlan(db, { symbols, files });
+      if (opts.json) { out(result); } else { out(result, true); }
+    } finally { db.close(); }
+  });
+
+// ── cgraph lint ─────────────────────────────────────────────────
+program
+  .command('lint')
+  .description('Check architecture rules from .cgraph.json')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const config = loadConfig(root);
+      const rules = config.rules ?? [];
+      if (rules.length === 0) {
+        console.error(JSON.stringify({ error: 'No rules defined in .cgraph.json' }));
+        process.exit(1);
+      }
+      const result = lintArchitecture(db, rules);
+      if (opts.json) { out(result); } else { out(result, true); }
+      if (!result.passed) process.exit(1);
+    } finally { db.close(); }
+  });
+
+// ── cgraph dna ──────────────────────────────────────────────────
+program
+  .command('dna')
+  .description('Codebase fingerprint: languages, architecture, health scores, hubs')
+  .option('--json', 'output raw JSON')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const result = getCodebaseDNA(db);
+      if (opts.json) { out(result); } else { out(result, true); }
+    } finally { db.close(); }
   });
 
 // ── cgraph serve --mcp ──────────────────────────────────────────
