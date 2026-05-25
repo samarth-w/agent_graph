@@ -312,7 +312,7 @@ export function getNodeDetail(
   db: GraphDB,
   rootDir: string,
   symbolName: string,
-  opts: { includeCode?: boolean } = {},
+  opts: { includeCode?: boolean; maxTrail?: number; maxSnippetLines?: number } = {},
 ): NodeDetail | null {
   const nodes = db.findNodesByName(symbolName);
   if (nodes.length === 0) return null;
@@ -358,11 +358,11 @@ export function getNodeDetail(
     signature: node.signature,
     doc: node.doc,
     exported: node.exported === 1,
-    trail: { callers: callers.slice(0, 12), callees: callees.slice(0, 12) },
+    trail: { callers: callers.slice(0, opts.maxTrail ?? 15), callees: callees.slice(0, opts.maxTrail ?? 15) },
   };
 
   if (opts.includeCode) {
-    detail.code = readSourceRange(rootDir, filePath, node.start_line, node.end_line, 60);
+    detail.code = readSourceRange(rootDir, filePath, node.start_line, node.end_line, opts.maxSnippetLines ?? 60);
   }
 
   return detail;

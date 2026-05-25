@@ -14,6 +14,9 @@ import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNode
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DEFAULT_CONFIG } from './config';
+import { computeLimits } from './adaptive';
+import { toMermaid, toDot } from './export';
+import { findChangedSymbols, getChangedFiles } from './git';
 import { startMcpServer } from './mcp';
 import { FileWatcher } from './watcher';
 
@@ -161,16 +164,21 @@ program
   .command('callers')
   .description('Find all callers of a symbol')
   .argument('<symbol>', 'symbol name')
-  .option('--depth <n>', 'max traversal depth', '3')
-  .option('--limit <n>', 'max nodes', '50')
+  .option('--depth <n>', 'max traversal depth')
+  .option('--limit <n>', 'max nodes')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (symbol: string, opts: any) => {
     const root = resolveRoot();
     const db = await openDb(root);
     try {
+      const adaptive = computeLimits(db, 'callers', {
+        symbolName: symbol,
+        explicitDepth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+        explicitMaxNodes: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      });
       const result = findCallers(db, symbol, {
-        maxDepth: parseInt(opts.depth, 10),
-        maxNodes: parseInt(opts.limit, 10),
+        maxDepth: adaptive.maxDepth,
+        maxNodes: adaptive.maxNodes,
       });
       out({
         symbol,
@@ -196,16 +204,21 @@ program
   .command('callees')
   .description('Find all callees of a symbol')
   .argument('<symbol>', 'symbol name')
-  .option('--depth <n>', 'max traversal depth', '3')
-  .option('--limit <n>', 'max nodes', '50')
+  .option('--depth <n>', 'max traversal depth')
+  .option('--limit <n>', 'max nodes')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (symbol: string, opts: any) => {
     const root = resolveRoot();
     const db = await openDb(root);
     try {
+      const adaptive = computeLimits(db, 'callees', {
+        symbolName: symbol,
+        explicitDepth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+        explicitMaxNodes: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      });
       const result = findCallees(db, symbol, {
-        maxDepth: parseInt(opts.depth, 10),
-        maxNodes: parseInt(opts.limit, 10),
+        maxDepth: adaptive.maxDepth,
+        maxNodes: adaptive.maxNodes,
       });
       out({
         symbol,
@@ -231,16 +244,21 @@ program
   .command('impact')
   .description('Analyze impact of changing a file or symbol')
   .argument('<target>', 'symbol name or file path')
-  .option('--depth <n>', 'max traversal depth', '3')
-  .option('--limit <n>', 'max nodes', '50')
+  .option('--depth <n>', 'max traversal depth')
+  .option('--limit <n>', 'max nodes')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (target: string, opts: any) => {
     const root = resolveRoot();
     const db = await openDb(root);
     try {
+      const adaptive = computeLimits(db, 'impact', {
+        symbolName: target,
+        explicitDepth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+        explicitMaxNodes: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      });
       const result = analyzeImpact(db, target, {
-        maxDepth: parseInt(opts.depth, 10),
-        maxNodes: parseInt(opts.limit, 10),
+        maxDepth: adaptive.maxDepth,
+        maxNodes: adaptive.maxNodes,
       });
       out({
         target: result.target,
@@ -266,17 +284,21 @@ program
   .command('context')
   .description('Build minimal context payload for a task')
   .argument('<task>', 'task description (natural language)')
-  .option('--depth <n>', 'max expansion depth', '2')
-  .option('--limit <n>', 'max nodes', '50')
+  .option('--depth <n>', 'max expansion depth')
+  .option('--limit <n>', 'max nodes')
   .option('--snippets <n>', 'max snippets', '20')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (task: string, opts: any) => {
     const root = resolveRoot();
     const db = await openDb(root);
     try {
+      const adaptive = computeLimits(db, 'context', {
+        explicitDepth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+        explicitMaxNodes: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      });
       const payload = buildContext(db, root, task, {
-        maxDepth: parseInt(opts.depth, 10),
-        maxNodes: parseInt(opts.limit, 10),
+        maxDepth: adaptive.maxDepth,
+        maxNodes: adaptive.maxNodes,
         maxSnippets: parseInt(opts.snippets, 10),
       });
       out(payload, opts.pretty);
@@ -441,6 +463,63 @@ program
     }
   });
 
+// ── cgraph export ───────────────────────────────────────────────
+program
+  .command('export')
+  .description('Export the code graph as Mermaid or DOT diagram')
+  .option('--format <fmt>', 'output format (mermaid|dot)', 'mermaid')
+  .option('--symbol <name>', 'center the diagram on this symbol')
+  .option('--depth <n>', 'traversal depth from symbol', '4')
+  .option('--limit <n>', 'max nodes to include', '100')
+  .option('--direction <dir>', 'traversal direction (forward|backward|both)', 'both')
+  .option('-o, --output <file>', 'write to file instead of stdout')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const exportOpts = {
+        symbol: opts.symbol as string | undefined,
+        maxDepth: parseInt(opts.depth, 10),
+        maxNodes: parseInt(opts.limit, 10),
+        direction: opts.direction as 'forward' | 'backward' | 'both',
+      };
+      const output = opts.format === 'dot' ? toDot(db, exportOpts) : toMermaid(db, exportOpts);
+      if (opts.output) {
+        fs.writeFileSync(opts.output, output, 'utf-8');
+        process.stdout.write(JSON.stringify({ file: opts.output, format: opts.format }) + '\n');
+      } else {
+        process.stdout.write(output + '\n');
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph changed ──────────────────────────────────────────────
+program
+  .command('changed')
+  .description('Find symbols changed in git diff')
+  .option('--ref <ref>', 'git ref to diff against', 'HEAD')
+  .option('--staged', 'only show staged changes')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: any) => {
+    const root = resolveRoot();
+    const db = await openDb(root);
+    try {
+      const symbols = findChangedSymbols(db, root, {
+        ref: opts.ref,
+        staged: opts.staged === true,
+      });
+      out({
+        changed_symbols: symbols,
+        total: symbols.length,
+        changed_files: getChangedFiles(root, { ref: opts.ref, staged: opts.staged }),
+      }, opts.pretty);
+    } finally {
+      db.close();
+    }
+  });
+
 // ── cgraph files ────────────────────────────────────────────────
 program
   .command('files')
@@ -470,7 +549,7 @@ program
   .description('Find test files affected by changed source files')
   .argument('[files...]', 'changed file paths')
   .option('--stdin', 'read file list from stdin')
-  .option('--depth <n>', 'max dependency traversal depth', '5')
+  .option('--depth <n>', 'max dependency traversal depth')
   .option('--filter <glob>', 'custom glob to identify test files')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (files: string[], opts: any) => {
@@ -490,7 +569,7 @@ program
     const db = await openDb(root);
     try {
       const result = findAffected(db, changedFiles, {
-        depth: parseInt(opts.depth, 10),
+        depth: opts.depth ? parseInt(opts.depth, 10) : computeLimits(db, 'affected').maxDepth,
         testPattern: opts.filter,
       });
       out(result, opts.pretty);

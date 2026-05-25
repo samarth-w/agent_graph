@@ -15,6 +15,10 @@ import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNode
 import { searchSymbols } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath } from './config';
+import { computeLimits } from './adaptive';
+import { toMermaid, toDot } from './export';
+import { findChangedSymbols } from './git';
+import { LRUCache } from './cache';
 import type { McpToolDef, McpToolResult } from './types';
 
 // ─── Input validation ──────────────────────────────────────────
@@ -166,6 +170,31 @@ const TOOLS: McpToolDef[] = [
       required: ['files'],
     },
   },
+  {
+    name: 'cgraph_export',
+    description: 'Export the code graph as a Mermaid or DOT (Graphviz) diagram. Optionally scope to a symbol and its neighborhood.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', description: 'Output format', enum: ['mermaid', 'dot'], default: 'mermaid' },
+        symbol: { type: 'string', description: 'Center the diagram on this symbol (omit for whole graph)' },
+        depth: { type: 'number', description: 'Traversal depth from symbol (default: 4)', default: 4 },
+        maxNodes: { type: 'number', description: 'Max nodes to include (default: 100)', default: 100 },
+        direction: { type: 'string', description: 'Traversal direction', enum: ['forward', 'backward', 'both'], default: 'both' },
+      },
+    },
+  },
+  {
+    name: 'cgraph_changed',
+    description: 'Find symbols changed in the current git diff. Maps changed lines to specific functions/classes in the graph. Use before cgraph_impact to see what changed and what might break.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'Git ref to diff against (default: HEAD)', default: 'HEAD' },
+        staged: { type: 'boolean', description: 'Only show staged changes', default: false },
+      },
+    },
+  },
 ];
 
 // ─── Tool handler ──────────────────────────────────────────────
@@ -173,6 +202,7 @@ class ToolHandler {
   private db: GraphDB | null = null;
   private lastSyncTime = 0;
   private syncing = false;
+  private cache = new LRUCache<McpToolResult>(64, 30_000);
   private static SYNC_INTERVAL_MS = 60_000; // auto-sync every 60s
 
   constructor(private rootDir: string) {}
@@ -198,6 +228,7 @@ class ToolHandler {
         const old = this.db;
         this.db = fresh;
         old?.close();
+        this.cache.clear(); // invalidate cache after re-index
         this.syncing = false;
       }).catch(() => { this.syncing = false; });
     }
@@ -205,23 +236,42 @@ class ToolHandler {
     return this.db;
   }
 
+  // Tools that produce deterministic results from the same args
+  private static CACHEABLE = new Set([
+    'cgraph_search', 'cgraph_callers', 'cgraph_callees', 'cgraph_impact',
+    'cgraph_node', 'cgraph_trace', 'cgraph_files', 'cgraph_status', 'cgraph_export',
+  ]);
+
   async execute(toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
+    // Check cache for deterministic tools
+    const cacheKey = ToolHandler.CACHEABLE.has(toolName)
+      ? `${toolName}:${JSON.stringify(args)}` : null;
+    if (cacheKey) {
+      const cached = this.cache.get(cacheKey);
+      if (cached) return cached;
+    }
+
     try {
+      let result: McpToolResult;
       switch (toolName) {
-        case 'cgraph_search': return await this.handleSearch(args);
-        case 'cgraph_context': return await this.handleContext(args);
-        case 'cgraph_trace': return await this.handleTrace(args);
-        case 'cgraph_explore': return await this.handleExplore(args);
-        case 'cgraph_node': return await this.handleNode(args);
-        case 'cgraph_callers': return await this.handleCallers(args);
-        case 'cgraph_callees': return await this.handleCallees(args);
-        case 'cgraph_impact': return await this.handleImpact(args);
-        case 'cgraph_files': return await this.handleFiles(args);
-        case 'cgraph_status': return await this.handleStatus(args);
-        case 'cgraph_affected': return await this.handleAffected(args);
+        case 'cgraph_search': result = await this.handleSearch(args); break;
+        case 'cgraph_context': result = await this.handleContext(args); break;
+        case 'cgraph_trace': result = await this.handleTrace(args); break;
+        case 'cgraph_explore': result = await this.handleExplore(args); break;
+        case 'cgraph_node': result = await this.handleNode(args); break;
+        case 'cgraph_callers': result = await this.handleCallers(args); break;
+        case 'cgraph_callees': result = await this.handleCallees(args); break;
+        case 'cgraph_impact': result = await this.handleImpact(args); break;
+        case 'cgraph_files': result = await this.handleFiles(args); break;
+        case 'cgraph_status': result = await this.handleStatus(args); break;
+        case 'cgraph_affected': result = await this.handleAffected(args); break;
+        case 'cgraph_export': result = await this.handleExport(args); break;
+        case 'cgraph_changed': result = await this.handleChanged(args); break;
         default:
           return this.errorResult(`Unknown tool: ${toolName}`);
       }
+      if (cacheKey && !result.isError) this.cache.set(cacheKey, result);
+      return result;
     } catch (err: any) {
       return this.errorResult(err.message ?? String(err));
     }
@@ -249,8 +299,10 @@ class ToolHandler {
   private async handleContext(args: Record<string, unknown>): Promise<McpToolResult> {
     const task = validateString(args.task, 'task');
     const db = await this.getDb();
-    const maxNodes = clamp(Number(args.maxNodes) || 20, 1, 200);
-    const payload = buildContext(db, this.rootDir, task, { maxNodes });
+    const adaptive = computeLimits(db, 'context', {
+      explicitMaxNodes: args.maxNodes != null ? clamp(Number(args.maxNodes), 1, 200) : undefined,
+    });
+    const payload = buildContext(db, this.rootDir, task, { maxNodes: adaptive.maxNodes });
     return this.textResult(JSON.stringify(payload, null, 2));
   }
 
@@ -281,8 +333,13 @@ class ToolHandler {
   private async handleExplore(args: Record<string, unknown>): Promise<McpToolResult> {
     const query = validateString(args.query, 'query');
     const db = await this.getDb();
-    const maxFiles = clamp(Number(args.maxFiles) || 12, 1, 20);
-    const result = explore(db, this.rootDir, query, { maxFiles });
+    const adaptive = computeLimits(db, 'explore');
+    const maxFiles = clamp(Number(args.maxFiles) || Math.min(adaptive.maxNodes, 20), 1, 20);
+    const result = explore(db, this.rootDir, query, {
+      maxFiles,
+      maxDepth: adaptive.maxDepth,
+      maxNodes: adaptive.maxNodes,
+    });
     if (result.files.length === 0) return this.textResult(`No relevant code for "${query}"`);
 
     const lines = [`## Explore: ${query}`, ''];
@@ -313,8 +370,10 @@ class ToolHandler {
   private async handleNode(args: Record<string, unknown>): Promise<McpToolResult> {
     const symbol = validateString(args.symbol, 'symbol');
     const db = await this.getDb();
+    const adaptive = computeLimits(db, 'node', { symbolName: symbol });
     const detail = getNodeDetail(db, this.rootDir, symbol, {
       includeCode: args.includeCode === true,
+      maxTrail: adaptive.maxNodes,
     });
     if (!detail) return this.textResult(`Symbol "${symbol}" not found`);
 
@@ -342,8 +401,11 @@ class ToolHandler {
   private async handleCallers(args: Record<string, unknown>): Promise<McpToolResult> {
     const symbol = validateString(args.symbol, 'symbol');
     const db = await this.getDb();
-    const limit = clamp(Number(args.limit) || 20, 1, 100);
-    const result = findCallers(db, symbol, { maxNodes: limit });
+    const adaptive = computeLimits(db, 'callers', {
+      symbolName: symbol,
+      explicitMaxNodes: args.limit != null ? clamp(Number(args.limit), 1, 100) : undefined,
+    });
+    const result = findCallers(db, symbol, { maxNodes: adaptive.maxNodes, maxDepth: adaptive.maxDepth });
     const callers = result.nodes.filter(n => n.name !== symbol);
     if (callers.length === 0) return this.textResult(`No callers found for "${symbol}"`);
     return this.textResult(this.formatNodeList(callers, `Callers of ${symbol}`));
@@ -352,8 +414,11 @@ class ToolHandler {
   private async handleCallees(args: Record<string, unknown>): Promise<McpToolResult> {
     const symbol = validateString(args.symbol, 'symbol');
     const db = await this.getDb();
-    const limit = clamp(Number(args.limit) || 20, 1, 100);
-    const result = findCallees(db, symbol, { maxNodes: limit });
+    const adaptive = computeLimits(db, 'callees', {
+      symbolName: symbol,
+      explicitMaxNodes: args.limit != null ? clamp(Number(args.limit), 1, 100) : undefined,
+    });
+    const result = findCallees(db, symbol, { maxNodes: adaptive.maxNodes, maxDepth: adaptive.maxDepth });
     const callees = result.nodes.filter(n => n.name !== symbol);
     if (callees.length === 0) return this.textResult(`No callees found for "${symbol}"`);
     return this.textResult(this.formatNodeList(callees, `Callees of ${symbol}`));
@@ -362,8 +427,11 @@ class ToolHandler {
   private async handleImpact(args: Record<string, unknown>): Promise<McpToolResult> {
     const symbol = validateString(args.symbol, 'symbol');
     const db = await this.getDb();
-    const depth = clamp(Number(args.depth) || 2, 1, 10);
-    const result = analyzeImpact(db, symbol, { maxDepth: depth });
+    const adaptive = computeLimits(db, 'impact', {
+      symbolName: symbol,
+      explicitDepth: args.depth != null ? clamp(Number(args.depth), 1, 10) : undefined,
+    });
+    const result = analyzeImpact(db, symbol, { maxDepth: adaptive.maxDepth, maxNodes: adaptive.maxNodes });
     if (result.impacted_nodes.length === 0) return this.textResult(`No impact found for "${symbol}"`);
     const lines = [
       `## Impact Analysis: ${symbol}`, '',
@@ -437,7 +505,10 @@ class ToolHandler {
     const filesStr = validateString(args.files, 'files');
     const db = await this.getDb();
     const changedFiles = filesStr.split(',').map(f => f.trim()).filter(f => f.length > 0);
-    const depth = clamp(Number(args.depth) || 5, 1, 20);
+    const adaptive = computeLimits(db, 'affected', {
+      explicitDepth: args.depth != null ? clamp(Number(args.depth), 1, 20) : undefined,
+    });
+    const depth = adaptive.maxDepth;
     const result = findAffected(db, changedFiles, {
       depth,
       testPattern: args.filter as string | undefined,
@@ -450,6 +521,37 @@ class ToolHandler {
       `Changed: ${result.changed_files.join(', ')}`, '',
     ];
     for (const t of result.affected_tests) lines.push(`- ${t}`);
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleExport(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const format = (args.format as string) || 'mermaid';
+    const exportOpts = {
+      symbol: args.symbol as string | undefined,
+      maxDepth: args.depth != null ? clamp(Number(args.depth), 1, 10) : undefined,
+      maxNodes: args.maxNodes != null ? clamp(Number(args.maxNodes), 1, 500) : undefined,
+      direction: args.direction as 'forward' | 'backward' | 'both' | undefined,
+    };
+    const output = format === 'dot' ? toDot(db, exportOpts) : toMermaid(db, exportOpts);
+    return this.textResult(output);
+  }
+
+  private async handleChanged(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const symbols = findChangedSymbols(db, this.rootDir, {
+      ref: (args.ref as string) || 'HEAD',
+      staged: args.staged === true,
+    });
+    if (symbols.length === 0) {
+      return this.textResult('No changed symbols detected in git diff.');
+    }
+    const lines = [`## Changed Symbols (${symbols.length})`, ''];
+    for (const s of symbols) {
+      const tag = s.change_type === 'in_diff' ? '**changed**' : 'in changed file';
+      lines.push(`- ${s.name} (${s.kind}) — ${s.file}:${s.start_line} [${tag}]`);
+    }
+    lines.push('', '> Use cgraph_impact on these symbols to see what might break.');
     return this.textResult(lines.join('\n'));
   }
 

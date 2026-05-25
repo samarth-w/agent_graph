@@ -171,10 +171,12 @@ export function explore(
   db: GraphDB,
   rootDir: string,
   query: string,
-  opts: { maxFiles?: number; maxCharsPerFile?: number } = {},
+  opts: { maxFiles?: number; maxCharsPerFile?: number; maxDepth?: number; maxNodes?: number } = {},
 ): ExploreResult {
   const maxFiles = opts.maxFiles ?? 12;
   const maxCharsPerFile = opts.maxCharsPerFile ?? 6000;
+  const exploreDepth = opts.maxDepth ?? 2;
+  const exploreNodes = opts.maxNodes ?? 50;
 
   // 1. Search for relevant symbols
   const results = searchSymbols(db, query, { limit: 30 });
@@ -189,8 +191,8 @@ export function explore(
   for (const sr of results.slice(0, 8)) {
     if (nodeMap.size >= 200) break;
     const result = traverse(db, sr.node.id, {
-      maxDepth: 2,
-      maxNodes: Math.min(50, 200 - nodeMap.size),
+      maxDepth: exploreDepth,
+      maxNodes: Math.min(exploreNodes, 200 - nodeMap.size),
       direction: 'both',
     });
     for (const n of result.nodes) {
