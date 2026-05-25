@@ -83,9 +83,25 @@ function loadSql() {
 }
 
 // --- DB wrapper -----------------------------------------------------
+
+/** Tokenize text for inverted index: camelCase split, snake_case split, lowercase */
+function indexTokenize(text: string): string[] {
+  return text
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_\-./:\\(){}[\]<>,;'"=+*#@!?|&^~`$%]/g, ' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(t => t.length >= 2);
+}
+
 export class GraphDB {
   private db: SqlJsDatabase;
   readonly dbPath: string;
+
+  /** Inverted index: token → Set<nodeId> */
+  private invertedIndex: Map<string, Set<number>> | null = null;
+  /** Forward index: nodeId → { node, filePath, tokens } */
+  private indexedDocs: Map<number, { node: NodeRecord; filePath: string; tokens: string[] }> | null = null;
 
   private constructor(db: SqlJsDatabase, dbPath: string) {
     this.db = db;
@@ -224,6 +240,44 @@ export class GraphDB {
     );
     this.run('DELETE FROM nodes WHERE file_id = ?', [fileId]);
     this.run('DELETE FROM raw_refs WHERE file_id = ?', [fileId]);
+    this.invalidateIndex();
+  }
+
+  /** Invalidate the in-memory inverted index (call after data mutations) */
+  invalidateIndex(): void {
+    this.invertedIndex = null;
+    this.indexedDocs = null;
+  }
+
+  /** Lazily build the inverted index from all nodes */
+  private ensureIndex(): void {
+    if (this.invertedIndex) return;
+    this.invertedIndex = new Map();
+    this.indexedDocs = new Map();
+
+    const rows = this.all(
+      `SELECT n.*, f.path AS file_path FROM nodes n JOIN files f ON f.id = n.file_id`,
+      [],
+    );
+
+    for (const row of rows) {
+      const node: NodeRecord = {
+        id: row.id, file_id: row.file_id, name: row.name,
+        qualified_name: row.qualified_name, kind: row.kind,
+        start_line: row.start_line, end_line: row.end_line,
+        signature: row.signature, doc: row.doc,
+        exported: row.exported, role: row.role,
+      };
+      const text = [node.name, node.qualified_name, node.signature ?? '', node.doc ?? ''].join(' ');
+      const tokens = indexTokenize(text);
+      this.indexedDocs.set(node.id, { node, filePath: row.file_path as string, tokens });
+
+      for (const token of tokens) {
+        let set = this.invertedIndex.get(token);
+        if (!set) { set = new Set(); this.invertedIndex.set(token, set); }
+        set.add(node.id);
+      }
+    }
   }
 
   // -- node ops ------------------------------------------------------
@@ -237,6 +291,7 @@ export class GraphDB {
       'DELETE FROM nodes WHERE file_id = ? AND qualified_name = ?',
       [fileId, qualifiedName],
     );
+    this.invalidateIndex();
     return this.run(
       `INSERT INTO nodes
         (file_id,name,qualified_name,kind,start_line,end_line,signature,doc,exported)
@@ -378,60 +433,89 @@ export class GraphDB {
     return { outgoing, incoming };
   }
 
-  // -- keyword search (LIKE-based, ranked) ----------------------------
-  ftsSearch(query: string, limit = 20): SearchResult[] {
-    const terms = query.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0);
-    if (terms.length === 0) return [];
-
-    // Build WHERE clause: ANY term can match (OR), ranked by match count
-    const conditions = terms.map(() =>
-      `(n.name LIKE ? OR n.qualified_name LIKE ? OR n.signature LIKE ? OR n.doc LIKE ?)`
-    ).join(' OR ');
-    const params: any[] = [];
-    for (const t of terms) {
-      const pat = `%${t}%`;
-      params.push(pat, pat, pat, pat);
+  /** Get candidate node IDs from inverted index for given tokens (union of postings) */
+  getInvertedCandidates(tokens: string[]): number[] {
+    this.ensureIndex();
+    const idx = this.invertedIndex!;
+    const candidates = new Set<number>();
+    for (const t of tokens) {
+      const tl = t.toLowerCase();
+      const exact = idx.get(tl);
+      if (exact) for (const id of exact) candidates.add(id);
+      // Prefix match for short tokens
+      if (tl.length <= 4) {
+        for (const [token, ids] of idx) {
+          if (token.startsWith(tl) && token !== tl) {
+            for (const id of ids) candidates.add(id);
+          }
+        }
+      }
     }
-    // Fetch more candidates for post-hoc ranking when using OR
-    params.push(limit * 5);
+    return [...candidates];
+  }
 
-    const rows = this.all(
-      `SELECT n.*, f.path AS file_path
-       FROM nodes n
-       JOIN files f ON f.id = n.file_id
-       WHERE ${conditions}
-       LIMIT ?`,
-      params,
-    );
+  // -- keyword search (inverted index, ranked) ------------------------
+  ftsSearch(query: string, limit = 20): SearchResult[] {
+    const rawTerms = query.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0);
+    if (rawTerms.length === 0) return [];
 
-    // Score: exact name > prefix > contains; more matched terms > fewer; exported > unexported
-    return rows.map(row => {
+    // Also tokenize with camelCase/snake_case splitting for index compatibility
+    const terms = new Set<string>();
+    for (const t of rawTerms) {
+      terms.add(t.toLowerCase());
+      for (const sub of indexTokenize(t)) terms.add(sub);
+    }
+    const termArr = [...terms].filter(t => t.length > 0);
+    if (termArr.length === 0) return [];
+
+    this.ensureIndex();
+    const idx = this.invertedIndex!;
+    const docs = this.indexedDocs!;
+
+    // Collect candidate node IDs — union of all term postings
+    const candidates = new Set<number>();
+    for (const t of termArr) {
+      // Exact token match
+      const exact = idx.get(t);
+      if (exact) for (const id of exact) candidates.add(id);
+      // Prefix match for short queries (≤ 4 chars)
+      if (t.length <= 4) {
+        for (const [token, ids] of idx) {
+          if (token.startsWith(t) && token !== t) {
+            for (const id of ids) candidates.add(id);
+          }
+        }
+      }
+    }
+
+    if (candidates.size === 0) return [];
+
+    // Score candidates: exact name > prefix > contains; more terms > fewer; exported boost
+    const results: SearchResult[] = [];
+    for (const id of candidates) {
+      const doc = docs.get(id);
+      if (!doc) continue;
+
       let score = 0;
-      const nameLower = (row.name as string).toLowerCase();
-      const qnameLower = (row.qualified_name as string || '').toLowerCase();
-      const sigLower = (row.signature as string || '').toLowerCase();
-      const docLower = (row.doc as string || '').toLowerCase();
-      for (const t of terms) {
-        const tl = t.toLowerCase();
+      const nameLower = doc.node.name.toLowerCase();
+      const qnameLower = (doc.node.qualified_name || '').toLowerCase();
+      const sigLower = (doc.node.signature || '').toLowerCase();
+      const docLower = (doc.node.doc || '').toLowerCase();
+      // Score using original raw terms (not sub-tokens) for relevance
+      const scoringTerms = rawTerms.map(t => t.toLowerCase());
+      for (const tl of scoringTerms) {
         if (nameLower === tl) score += 100;
         else if (nameLower.startsWith(tl)) score += 50;
         else if (nameLower.includes(tl)) score += 20;
         else if (qnameLower.includes(tl) || sigLower.includes(tl) || docLower.includes(tl)) score += 5;
-        // no match for this term → 0 points (doesn't penalize)
       }
-      if (row.exported) score += 10;
-      return {
-        node: {
-          id: row.id, file_id: row.file_id, name: row.name,
-          qualified_name: row.qualified_name, kind: row.kind,
-          start_line: row.start_line, end_line: row.end_line,
-          signature: row.signature, doc: row.doc,
-          exported: row.exported, role: row.role,
-        },
-        file_path: row.file_path as string,
-        rank: -score,  // negative so higher score sorts first
-      };
-    }).sort((a, b) => a.rank - b.rank).slice(0, limit);
+      if (doc.node.exported) score += 10;
+      if (score > 0) {
+        results.push({ node: doc.node, file_path: doc.filePath, rank: -score });
+      }
+    }
+
+    return results.sort((a, b) => a.rank - b.rank).slice(0, limit);
   }
 
   /**

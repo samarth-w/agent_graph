@@ -13,7 +13,7 @@ import { GraphDB } from './storage';
 import { indexProject } from './indexer';
 import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings, getAutoContext, validatePlan, getCodebaseDNA } from './graph';
 import { searchSymbols, intentSearch } from './search';
-import { buildContext, explore } from './context';
+import { buildContext, explore, clearFileCache } from './context';
 import { getDbPath, DB_DIR, loadConfig } from './config';
 import { lintArchitecture } from './lint';
 import { computeLimits } from './adaptive';
@@ -347,6 +347,7 @@ class ToolHandler {
         this.db = fresh;
         old?.close();
         this.cache.clear();
+        clearFileCache();
         this.onProgress?.('sync', 'Index reloaded');
       } catch { /* keep old db */ }
       this.syncing = false;

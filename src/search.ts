@@ -128,6 +128,9 @@ export function intentSearch(
   const queryTerms = tokenize(query);
   if (queryTerms.length === 0) return { results: [], total: 0, query_terms: [] };
 
+  // Use inverted index for fast candidate retrieval
+  const candidateIds = db.getInvertedCandidates(queryTerms);
+
   const allNodes = db.getAllNodes();
   const N = allNodes.length;
   if (N === 0) return { results: [], total: 0, query_terms: queryTerms };
@@ -137,9 +140,21 @@ export function intentSearch(
   const nodeMap = db.getNodeMap();
   const { outgoing: callOut, incoming: callIn } = db.getAdjacencyMaps('calls');
 
-  // Build document for each node
+  // Build documents only for candidates (+ kind-filtered nodes that have callers/callees matching)
+  const candidateSet = new Set(candidateIds);
+
+  // Also add nodes whose callers/callees are in candidateSet (for context enrichment)
+  for (const id of [...candidateIds]) {
+    const callers = callIn.get(id) ?? [];
+    for (const e of callers.slice(0, 3)) candidateSet.add(e.source_id);
+    const callees = callOut.get(id) ?? [];
+    for (const e of callees.slice(0, 3)) candidateSet.add(e.target_id);
+  }
+
   const docs: { node: typeof allNodes[0]; tokens: string[]; filePath: string }[] = [];
-  for (const node of allNodes) {
+  for (const id of candidateSet) {
+    const node = nodeMap.get(id);
+    if (!node) continue;
     if (opts.kind && node.kind !== opts.kind) continue;
     const fp = fileMap.get(node.file_id)?.path ?? '';
 
@@ -159,7 +174,9 @@ export function intentSearch(
     docs.push({ node, tokens: tokenize(parts.join(' ')), filePath: fp });
   }
 
-  // Compute document frequencies per term
+  if (docs.length === 0) return { results: [], total: 0, query_terms: queryTerms };
+
+  // Compute document frequencies per term (across candidates only)
   const df = new Map<string, number>();
   for (const term of queryTerms) {
     let count = 0;
@@ -169,12 +186,12 @@ export function intentSearch(
     df.set(term, count);
   }
 
-  // Avg document length
+  // Use global N for IDF (not candidate count) for better discrimination
   const avgDl = docs.reduce((s, d) => s + d.tokens.length, 0) / (docs.length || 1);
   const k1 = 1.2;
   const b = 0.75;
 
-  // Score each document
+  // Score each document with BM25
   const scored: IntentMatch[] = [];
   for (const doc of docs) {
     let score = 0;
@@ -187,7 +204,7 @@ export function intentSearch(
       if (tf === 0) continue;
 
       matched.push(term);
-      const idf = Math.log((docs.length - termDf + 0.5) / (termDf + 0.5) + 1);
+      const idf = Math.log((N - termDf + 0.5) / (termDf + 0.5) + 1);
       const dl = doc.tokens.length;
       const tfScore = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / avgDl));
       score += idf * tfScore;

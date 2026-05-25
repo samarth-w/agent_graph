@@ -19,6 +19,28 @@ import type {
   GraphConfig, NodeRecord, ExploreResult, ExploreFileGroup, ExploreRelationship,
 } from './types';
 
+/** In-memory file content cache — avoids repeated readFileSync for same file within a session */
+const fileContentCache = new Map<string, string | null>();
+const FILE_CACHE_MAX = 200;
+
+function readFileCached(absPath: string): string | null {
+  let content = fileContentCache.get(absPath);
+  if (content !== undefined) return content;
+  try {
+    if (!fs.existsSync(absPath)) { fileContentCache.set(absPath, null); return null; }
+    content = fs.readFileSync(absPath, 'utf-8');
+  } catch { content = null; }
+  if (fileContentCache.size >= FILE_CACHE_MAX) {
+    const oldest = fileContentCache.keys().next().value;
+    if (oldest !== undefined) fileContentCache.delete(oldest);
+  }
+  fileContentCache.set(absPath, content);
+  return content;
+}
+
+/** Clear cached file contents (call after re-index) */
+export function clearFileCache(): void { fileContentCache.clear(); }
+
 export function buildContext(
   db: GraphDB,
   rootDir: string,
@@ -34,6 +56,9 @@ export function buildContext(
   const visited = new Set<number>();
   const expandedNodes: Map<number, NodeRecord & { file_path: string; depth: number }> = new Map();
   const expandedEdges: Map<string, { source_qname: string; target_qname: string; kind: string }> = new Map();
+
+  // Pre-load node map for O(1) edge lookups
+  const nodeMap = db.getNodeMap();
 
   for (const sr of searchResults) {
     if (expandedNodes.size >= cfg.maxNodes) break;
@@ -51,8 +76,8 @@ export function buildContext(
     }
 
     for (const e of result.edges) {
-      const sourceNode = db.getNode(e.source_id);
-      const targetNode = db.getNode(e.target_id);
+      const sourceNode = nodeMap.get(e.source_id);
+      const targetNode = nodeMap.get(e.target_id);
       if (sourceNode && targetNode) {
         const key = `${e.source_id}-${e.target_id}-${e.kind}`;
         if (!expandedEdges.has(key)) {
@@ -110,10 +135,10 @@ export function buildContext(
     if (!filePath) continue;
 
     const absPath = path.resolve(rootDir, filePath);
-    if (!fs.existsSync(absPath)) continue;
 
     try {
-      const content = fs.readFileSync(absPath, 'utf-8');
+      const content = readFileCached(absPath);
+      if (!content) continue;
       const lines = content.split('\n');
 
       let startLine = node.start_line - 1;
@@ -185,24 +210,26 @@ export function explore(
   }
 
   // 2. Expand through graph to capture related symbols
-  const nodeMap = new Map<number, NodeRecord & { file_path: string }>();
+  const nodeMap = db.getNodeMap();
+  const fileMap = db.getFileMap();
+  const nodeMapLocal = new Map<number, NodeRecord & { file_path: string }>();
   const edgesCollected: { source_qname: string; target_qname: string; kind: string }[] = [];
 
   for (const sr of results.slice(0, 8)) {
-    if (nodeMap.size >= 200) break;
+    if (nodeMapLocal.size >= 200) break;
     const result = traverse(db, sr.node.id, {
       maxDepth: exploreDepth,
-      maxNodes: Math.min(exploreNodes, 200 - nodeMap.size),
+      maxNodes: Math.min(exploreNodes, 200 - nodeMapLocal.size),
       direction: 'both',
     });
     for (const n of result.nodes) {
-      if (!nodeMap.has(n.id)) {
-        nodeMap.set(n.id, { ...n, file_path: n.file_path });
+      if (!nodeMapLocal.has(n.id)) {
+        nodeMapLocal.set(n.id, { ...n, file_path: n.file_path });
       }
     }
     for (const e of result.edges) {
-      const src = db.getNode(e.source_id);
-      const tgt = db.getNode(e.target_id);
+      const src = nodeMap.get(e.source_id);
+      const tgt = nodeMap.get(e.target_id);
       if (src && tgt) {
         edgesCollected.push({
           source_qname: src.qualified_name,
@@ -222,11 +249,11 @@ export function explore(
 
   const entryIds = new Set(results.slice(0, 8).map(r => r.node.id));
 
-  for (const [, node] of nodeMap) {
+  for (const [, node] of nodeMapLocal) {
     const fp = node.file_path;
     let group = fileGroups.get(fp);
     if (!group) {
-      const fileRec = db.getFileById(node.file_id);
+      const fileRec = fileMap.get(node.file_id);
       group = { nodes: [], score: 0, language: fileRec?.language ?? '' };
       fileGroups.set(fp, group);
     }
@@ -245,10 +272,10 @@ export function explore(
 
   for (const [filePath, group] of sortedFiles) {
     const absPath = path.resolve(rootDir, filePath);
-    if (!fs.existsSync(absPath)) continue;
 
     try {
-      const content = fs.readFileSync(absPath, 'utf-8');
+      const content = readFileCached(absPath);
+      if (!content) continue;
       const lines = content.split('\n');
 
       // Sort nodes by line, find contiguous ranges
@@ -313,7 +340,7 @@ export function explore(
     files: exploreFiles,
     relationships: relationships.slice(0, 100),
     stats: {
-      total_symbols: nodeMap.size,
+      total_symbols: nodeMapLocal.size,
       total_files: exploreFiles.length,
       estimated_tokens: estimateTokens(JSON.stringify(exploreFiles)),
     },
