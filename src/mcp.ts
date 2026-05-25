@@ -171,6 +171,9 @@ const TOOLS: McpToolDef[] = [
 // ─── Tool handler ──────────────────────────────────────────────
 class ToolHandler {
   private db: GraphDB | null = null;
+  private lastSyncTime = 0;
+  private syncing = false;
+  private static SYNC_INTERVAL_MS = 60_000; // auto-sync every 60s
 
   constructor(private rootDir: string) {}
 
@@ -178,13 +181,27 @@ class ToolHandler {
     if (!this.db) {
       const dbPath = getDbPath(this.rootDir);
       if (!fs.existsSync(dbPath)) {
-        throw new Error(
-          'No cgraph index found. Run "cgraph index" first.\n' +
-          `Searched: ${dbPath}`
-        );
+        // Auto-index on first use — fire and forget
+        await indexProject(this.rootDir);
+        this.lastSyncTime = Date.now();
       }
       this.db = await GraphDB.open(dbPath);
     }
+
+    // Background sync: re-index changed files if enough time has passed
+    if (!this.syncing && Date.now() - this.lastSyncTime > ToolHandler.SYNC_INTERVAL_MS) {
+      this.lastSyncTime = Date.now();
+      this.syncing = true;
+      // Re-index in background, then swap to fresh db
+      indexProject(this.rootDir).then(async () => {
+        const fresh = await GraphDB.open(getDbPath(this.rootDir));
+        const old = this.db;
+        this.db = fresh;
+        old?.close();
+        this.syncing = false;
+      }).catch(() => { this.syncing = false; });
+    }
+
     return this.db;
   }
 
