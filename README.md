@@ -170,29 +170,78 @@ When running as an MCP server (`cgraph serve --mcp`), these tools are available 
 | `cgraph_status` | Index health check |
 | `cgraph_affected` | Find affected test files |
 
+## Benchmarks
+
+cgraph collapses multi-step agent workflows into single precomputed queries. Benchmarked on a **tic-tac-toe demo** (8 files, 49 nodes, 110 edges) and **cgraph's own codebase** (23 files, 272 nodes, 416 edges).
+
+### Tic-Tac-Toe Demo (live benchmark)
+
+| Task | Without cgraph | With cgraph | Speedup |
+|------|---------------|-------------|----------|
+| Refactor `minimax` — what breaks? | 5 tool calls | **1 call** (`impact`) | 5x fewer calls |
+| How does user input reach the board? | 4 tool calls, found 4 functions | **1 call** (`callees`), found **27 functions** | 4x fewer calls, 6.7x more complete |
+| Changed `checkWinner` — what's affected? | 2 calls + manual tracing, found ~5 symbols | **1 call** (`impact`), found **12 symbols** across 4 files | 2.4x more coverage |
+| **Totals** | **11 calls**, partial results | **3 calls**, complete results | **3.7x fewer calls** |
+
+### Agent Workflow Benchmark (cgraph codebase)
+
+| Question | Calls | Agent Time | Token Savings |
+|----------|-------|------------|---------------|
+| Where is `parseFile` defined and who calls it? | 4 → 1 | 8.0s → 2.2s | 41% ↓ |
+| Impact of changing `GraphDB.open`? | 10 → 1 | 20.0s → 2.2s | 92% ↓ |
+| How does CLI reach the database? | 7 → 1 | 14.0s → 2.2s | 100% ↓ |
+| Changed `config.ts` — what tests to run? | 5 → 1 | 10.0s → 2.2s | 99% ↓ |
+| Explain the architecture | 11 → 2 | 22.0s → 4.4s | 36% ↓ |
+| **Totals** | **37 → 6** | **74s → 13s (5.7x faster)** | **75% less context** |
+
+> Full benchmark details: [demo/demo_benchmark.md](demo/demo_benchmark.md)
+>
+> Benchmark scripts: `scripts/benchmark.mjs`, `scripts/benchmark-agent.mjs`, `scripts/benchmark-compare.mjs`
+
 ## Project Structure
 
 ```
 cgraph/
-├── bin/cgraph.js          # CLI entry point
+├── bin/cgraph.js              # CLI entry point
 ├── src/
-│   ├── cli.ts             # CLI commands (commander)
-│   ├── config.ts          # Configuration defaults
-│   ├── context.ts         # Context builder (search → expand → snippets)
-│   ├── frameworks.ts      # Route extraction (Express, Flask, etc.)
-│   ├── gitignore.ts       # .gitignore parsing
-│   ├── graph.ts           # BFS traversal, callers, callees, impact, trace
-│   ├── index.ts           # Public API re-exports
-│   ├── indexer.ts         # File walker + parser + edge resolver
-│   ├── mcp.ts             # MCP server (JSON-RPC 2.0 over stdio)
-│   ├── parser.ts          # Code parser (babel for JS/TS, regex for Python)
-│   ├── query-parser.ts    # Search query field extraction
-│   ├── search.ts          # Symbol search with filtering
-│   ├── storage.ts         # GraphDB (sql.js SQLite)
-│   ├── synthesizer.ts     # Dynamic dispatch edge synthesis
-│   ├── types.ts           # All type definitions
-│   └── watcher.ts         # File watcher with debounced re-index
-├── __tests__/             # Test suite (vitest, 105 tests)
+│   ├── cli.ts                 # CLI commands (commander)
+│   ├── config.ts              # Configuration defaults
+│   ├── context.ts             # Context builder (search → expand → snippets)
+│   ├── frameworks.ts          # Route extraction (Express, Flask, etc.)
+│   ├── gitignore.ts           # .gitignore parsing
+│   ├── graph.ts               # BFS traversal, callers, callees, impact, trace
+│   ├── index.ts               # Public API re-exports
+│   ├── indexer.ts             # File walker + parser + edge resolver
+│   ├── mcp.ts                 # MCP server (JSON-RPC 2.0 over stdio)
+│   ├── parser.ts              # Code parser (babel for JS/TS, regex for Python)
+│   ├── query-parser.ts        # Search query field extraction
+│   ├── search.ts              # Symbol search with filtering
+│   ├── storage.ts             # GraphDB (sql.js SQLite)
+│   ├── synthesizer.ts         # Dynamic dispatch edge synthesis
+│   ├── types.ts               # All type definitions
+│   └── watcher.ts             # File watcher with debounced re-index
+├── __tests__/                 # Test suite (vitest, 105 tests)
+│   ├── frameworks.test.ts
+│   ├── gitignore.test.ts
+│   ├── graph.test.ts
+│   ├── mcp.test.ts
+│   ├── parser.test.ts
+│   ├── query-parser.test.ts
+│   ├── storage.test.ts
+│   └── synthesizer.test.ts
+├── scripts/
+│   ├── benchmark.mjs          # MCP server latency benchmark
+│   ├── benchmark-agent.mjs    # Agent workflow benchmark (with vs without)
+│   ├── benchmark-compare.mjs  # Raw efficiency comparison
+│   ├── local-install.ps1/.sh  # Build + npm link for dev
+│   ├── setup-mcp.ps1          # Auto-configure .vscode/mcp.json
+│   └── smoke-test.ps1/.sh     # 19 end-to-end CLI tests
+├── demo/
+│   ├── demo_benchmark.md      # Full benchmark results
+│   └── tictactoe/src/         # Tic-tac-toe demo project (8 files)
+├── python_test/               # Python test project (Flask app, 6 files)
+├── install.ps1                # Windows standalone installer
+├── install.sh                 # macOS/Linux standalone installer
 ├── package.json
 └── tsconfig.json
 ```
@@ -227,6 +276,9 @@ bash scripts/smoke-test.sh
 | `scripts/local-install.ps1` / `.sh` | Build + npm link for dev testing |
 | `scripts/smoke-test.ps1` / `.sh` | 19 end-to-end CLI tests |
 | `scripts/setup-mcp.ps1` | Auto-configure `.vscode/mcp.json` for a project |
+| `scripts/benchmark.mjs` | MCP server latency benchmark (11 tools, burst, cold start) |
+| `scripts/benchmark-agent.mjs` | Agent workflow benchmark — with vs without cgraph |
+| `scripts/benchmark-compare.mjs` | Raw efficiency comparison (grep+read vs cgraph) |
 
 ## Architecture
 
@@ -270,10 +322,6 @@ console.log(result.nodes);
 
 db.close();
 ```
-
-## License
-
-MIT
 
 ## License
 
