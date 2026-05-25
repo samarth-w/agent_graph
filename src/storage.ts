@@ -338,16 +338,17 @@ export class GraphDB {
     const terms = query.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(t => t.length > 0);
     if (terms.length === 0) return [];
 
-    // Build WHERE clause: all terms must match at least one column
+    // Build WHERE clause: ANY term can match (OR), ranked by match count
     const conditions = terms.map(() =>
       `(n.name LIKE ? OR n.qualified_name LIKE ? OR n.signature LIKE ? OR n.doc LIKE ?)`
-    ).join(' AND ');
+    ).join(' OR ');
     const params: any[] = [];
     for (const t of terms) {
       const pat = `%${t}%`;
       params.push(pat, pat, pat, pat);
     }
-    params.push(limit);
+    // Fetch more candidates for post-hoc ranking when using OR
+    params.push(limit * 5);
 
     const rows = this.all(
       `SELECT n.*, f.path AS file_path
@@ -358,16 +359,20 @@ export class GraphDB {
       params,
     );
 
-    // Score: exact name > prefix > contains; exported > unexported
+    // Score: exact name > prefix > contains; more matched terms > fewer; exported > unexported
     return rows.map(row => {
       let score = 0;
       const nameLower = (row.name as string).toLowerCase();
+      const qnameLower = (row.qualified_name as string || '').toLowerCase();
+      const sigLower = (row.signature as string || '').toLowerCase();
+      const docLower = (row.doc as string || '').toLowerCase();
       for (const t of terms) {
         const tl = t.toLowerCase();
         if (nameLower === tl) score += 100;
         else if (nameLower.startsWith(tl)) score += 50;
         else if (nameLower.includes(tl)) score += 20;
-        else score += 5; // matched in qname / signature / doc
+        else if (qnameLower.includes(tl) || sigLower.includes(tl) || docLower.includes(tl)) score += 5;
+        // no match for this term → 0 points (doesn't penalize)
       }
       if (row.exported) score += 10;
       return {
