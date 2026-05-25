@@ -217,3 +217,308 @@ def list_users():
     expect(fn).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+//  C / C++ Extraction
+// ─────────────────────────────────────────────────────────────────
+describe('C Extraction', () => {
+  it('should extract function definitions', () => {
+    const code = `int add(int a, int b) {
+  return a + b;
+}`;
+    const result = parseFile(code, 'c', 'math.c');
+    const fn = result.symbols.find(s => s.name === 'add');
+    expect(fn).toBeDefined();
+    expect(fn!.kind).toBe('function');
+    expect(fn!.exported).toBe(true);
+  });
+
+  it('should extract static functions as non-exported', () => {
+    const code = `static void helper(void) {
+  return;
+}`;
+    const result = parseFile(code, 'c', 'util.c');
+    const fn = result.symbols.find(s => s.name === 'helper');
+    expect(fn).toBeDefined();
+    expect(fn!.exported).toBe(false);
+  });
+
+  it('should extract structs', () => {
+    const code = `struct Point {
+  int x;
+  int y;
+};`;
+    const result = parseFile(code, 'c', 'types.h');
+    const st = result.symbols.find(s => s.name === 'Point');
+    expect(st).toBeDefined();
+    expect(st!.kind).toBe('struct');
+  });
+
+  it('should extract enums', () => {
+    const code = `enum Color {
+  RED,
+  GREEN,
+  BLUE
+};`;
+    const result = parseFile(code, 'c', 'colors.h');
+    const en = result.symbols.find(s => s.name === 'Color');
+    expect(en).toBeDefined();
+    expect(en!.kind).toBe('enum');
+  });
+
+  it('should extract typedefs', () => {
+    const code = `typedef unsigned long size_t;`;
+    const result = parseFile(code, 'c', 'types.h');
+    const td = result.symbols.find(s => s.name === 'size_t');
+    expect(td).toBeDefined();
+    expect(td!.kind).toBe('type_alias');
+  });
+
+  it('should extract #include directives', () => {
+    const code = `#include <stdio.h>
+#include "myheader.h"
+int main() { return 0; }`;
+    const result = parseFile(code, 'c', 'main.c');
+    expect(result.imports.length).toBe(2);
+    expect(result.imports[0].source).toBe('stdio.h');
+    expect(result.imports[1].source).toBe('myheader.h');
+  });
+
+  it('should extract function calls', () => {
+    const code = `void process(int* data) {
+  int len = strlen(data);
+  printf("len=%d\\n", len);
+  free(data);
+}`;
+    const result = parseFile(code, 'c', 'proc.c');
+    const printfCall = result.calls.find(c => c.callee === 'printf');
+    expect(printfCall).toBeDefined();
+    const strlenCall = result.calls.find(c => c.callee === 'strlen');
+    expect(strlenCall).toBeDefined();
+  });
+
+  it('should handle doc comments', () => {
+    const code = `/** Adds two numbers. */
+int add(int a, int b) {
+  return a + b;
+}`;
+    const result = parseFile(code, 'c', 'math.c');
+    const fn = result.symbols.find(s => s.name === 'add');
+    expect(fn).toBeDefined();
+    expect(fn!.doc).toContain('Adds two numbers');
+  });
+});
+
+describe('C++ Extraction', () => {
+  it('should extract classes with inheritance', () => {
+    const code = `class Animal : public Base {
+public:
+  virtual void speak() = 0;
+};`;
+    const result = parseFile(code, 'cpp', 'animal.hpp');
+    const cls = result.symbols.find(s => s.name === 'Animal');
+    expect(cls).toBeDefined();
+    expect(cls!.kind).toBe('class');
+    expect(cls!.extends).toBe('Base');
+  });
+
+  it('should extract namespaces', () => {
+    const code = `namespace math {
+  int add(int a, int b) { return a + b; }
+}`;
+    const result = parseFile(code, 'cpp', 'math.cpp');
+    const ns = result.symbols.find(s => s.name === 'math');
+    expect(ns).toBeDefined();
+    expect(ns!.kind).toBe('namespace');
+  });
+
+  it('should extract enum class', () => {
+    const code = `enum class Direction {
+  North,
+  South,
+  East,
+  West
+};`;
+    const result = parseFile(code, 'cpp', 'dir.hpp');
+    const en = result.symbols.find(s => s.name === 'Direction');
+    expect(en).toBeDefined();
+    expect(en!.kind).toBe('enum');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+//  Shell / Bash Extraction
+// ─────────────────────────────────────────────────────────────────
+describe('Shell Extraction', () => {
+  it('should extract function keyword form', () => {
+    const code = `function deploy {
+  echo "deploying..."
+  rsync -av ./dist/ server:/app/
+}`;
+    const result = parseFile(code, 'shell', 'deploy.sh');
+    const fn = result.symbols.find(s => s.name === 'deploy');
+    expect(fn).toBeDefined();
+    expect(fn!.kind).toBe('function');
+  });
+
+  it('should extract function paren form', () => {
+    const code = `cleanup() {
+  rm -rf /tmp/build
+  echo "done"
+}`;
+    const result = parseFile(code, 'shell', 'clean.sh');
+    const fn = result.symbols.find(s => s.name === 'cleanup');
+    expect(fn).toBeDefined();
+    expect(fn!.kind).toBe('function');
+  });
+
+  it('should extract source imports', () => {
+    const code = `source ./config.sh
+. /usr/lib/helpers.sh
+echo "loaded"`;
+    const result = parseFile(code, 'shell', 'init.sh');
+    expect(result.imports.length).toBe(2);
+    expect(result.imports[0].source).toBe('./config.sh');
+    expect(result.imports[1].source).toBe('/usr/lib/helpers.sh');
+  });
+
+  it('should extract aliases', () => {
+    const code = `alias ll="ls -la"
+alias gs="git status"`;
+    const result = parseFile(code, 'shell', 'aliases.sh');
+    const ll = result.symbols.find(s => s.name === 'll');
+    expect(ll).toBeDefined();
+    expect(ll!.kind).toBe('variable');
+  });
+
+  it('should extract command calls', () => {
+    const code = `function build {
+  npm install
+  npm run build
+  docker build -t myapp .
+}`;
+    const result = parseFile(code, 'shell', 'build.sh');
+    const npmCall = result.calls.find(c => c.callee === 'npm');
+    expect(npmCall).toBeDefined();
+    const dockerCall = result.calls.find(c => c.callee === 'docker');
+    expect(dockerCall).toBeDefined();
+  });
+
+  it('should extract doc comments before function', () => {
+    const code = `# Starts the server on the given port
+# Usage: start_server 8080
+start_server() {
+  node server.js --port $1
+}`;
+    const result = parseFile(code, 'shell', 'server.sh');
+    const fn = result.symbols.find(s => s.name === 'start_server');
+    expect(fn).toBeDefined();
+    expect(fn!.doc).toContain('Starts the server');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+//  PowerShell Extraction
+// ─────────────────────────────────────────────────────────────────
+describe('PowerShell Extraction', () => {
+  it('should extract function definitions', () => {
+    const code = `function Get-UserInfo {
+  param([string]$Name)
+  Get-ADUser -Filter "Name -eq '$Name'"
+}`;
+    const result = parseFile(code, 'powershell', 'users.ps1');
+    const fn = result.symbols.find(s => s.name === 'Get-UserInfo');
+    expect(fn).toBeDefined();
+    expect(fn!.kind).toBe('function');
+  });
+
+  it('should extract function with params in parens', () => {
+    const code = `function Add-Numbers($a, $b) {
+  return $a + $b
+}`;
+    const result = parseFile(code, 'powershell', 'math.ps1');
+    const fn = result.symbols.find(s => s.name === 'Add-Numbers');
+    expect(fn).toBeDefined();
+  });
+
+  it('should extract class definitions', () => {
+    const code = `class Logger : BaseLogger {
+  [void] Log([string]$msg) {
+    Write-Host $msg
+  }
+}`;
+    const result = parseFile(code, 'powershell', 'logger.ps1');
+    const cls = result.symbols.find(s => s.name === 'Logger');
+    expect(cls).toBeDefined();
+    expect(cls!.kind).toBe('class');
+    expect(cls!.extends).toBe('BaseLogger');
+  });
+
+  it('should extract enum definitions', () => {
+    const code = `enum Severity {
+  Low
+  Medium
+  High
+  Critical
+}`;
+    const result = parseFile(code, 'powershell', 'types.ps1');
+    const en = result.symbols.find(s => s.name === 'Severity');
+    expect(en).toBeDefined();
+    expect(en!.kind).toBe('enum');
+  });
+
+  it('should extract Import-Module', () => {
+    const code = `Import-Module ActiveDirectory
+Import-Module "Az.Compute"
+using module MyModule`;
+    const result = parseFile(code, 'powershell', 'setup.ps1');
+    expect(result.imports.length).toBe(3);
+    expect(result.imports[0].source).toBe('ActiveDirectory');
+  });
+
+  it('should extract dot-sourced scripts', () => {
+    const code = `. ./helpers.ps1
+. "C:\\scripts\\config.ps1"`;
+    const result = parseFile(code, 'powershell', 'init.ps1');
+    expect(result.imports.length).toBe(2);
+    expect(result.imports[0].source).toBe('./helpers.ps1');
+  });
+
+  it('should extract cmdlet calls', () => {
+    const code = `function Deploy-App {
+  Get-Service -Name "MyApp"
+  Stop-Service -Name "MyApp"
+  Copy-Item -Path ./dist -Destination C:\\app
+  Start-Service -Name "MyApp"
+}`;
+    const result = parseFile(code, 'powershell', 'deploy.ps1');
+    const getCalls = result.calls.filter(c => c.callee === 'Get-Service');
+    expect(getCalls.length).toBeGreaterThan(0);
+    const stopCall = result.calls.find(c => c.callee === 'Stop-Service');
+    expect(stopCall).toBeDefined();
+  });
+
+  it('should extract filter definitions', () => {
+    const code = `filter Get-EvenNumbers {
+  if ($_ % 2 -eq 0) { $_ }
+}`;
+    const result = parseFile(code, 'powershell', 'filters.ps1');
+    const fn = result.symbols.find(s => s.name === 'Get-EvenNumbers');
+    expect(fn).toBeDefined();
+    expect(fn!.kind).toBe('function');
+  });
+
+  it('should handle comment-based help', () => {
+    const code = `<#
+.SYNOPSIS
+  Gets server status
+#>
+function Get-Status {
+  return "OK"
+}`;
+    const result = parseFile(code, 'powershell', 'status.ps1');
+    const fn = result.symbols.find(s => s.name === 'Get-Status');
+    expect(fn).toBeDefined();
+    expect(fn!.doc).toContain('Gets server status');
+  });
+});

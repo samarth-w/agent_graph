@@ -43,6 +43,20 @@ const LANG_MAP: Record<string, string> = {
   '.tsx': 'tsx',
   '.py':  'python',
   '.pyi': 'python',
+  '.c':   'c',
+  '.h':   'c',
+  '.cpp': 'cpp',
+  '.cc':  'cpp',
+  '.cxx': 'cpp',
+  '.hpp': 'cpp',
+  '.hh':  'cpp',
+  '.hxx': 'cpp',
+  '.sh':  'shell',
+  '.bash':'shell',
+  '.zsh': 'shell',
+  '.ps1': 'powershell',
+  '.psm1':'powershell',
+  '.psd1':'powershell',
 };
 
 export function detectLanguage(filePath: string): string | null {
