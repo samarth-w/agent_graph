@@ -52,8 +52,8 @@ This will:
 
 ```bash
 # Clone the repo
-git clone <your-repo-url>
-cd cgraph
+git clone https://github.com/samarth-w/agent_graph.git
+cd agent_graph
 
 # Install dependencies
 npm install
@@ -102,8 +102,8 @@ Restart VS Code. The 11 cgraph tools will appear in Copilot Chat automatically.
 
 **If they have Node.js:**
 ```bash
-git clone <your-repo-url>
-cd cgraph
+git clone https://github.com/samarth-w/agent_graph.git
+cd agent_graph
 npm install
 npm run build
 npm link          # makes `cgraph` available globally
