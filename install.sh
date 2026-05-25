@@ -227,7 +227,42 @@ else
     warn "Add this to your VS Code settings.json manually (see below)"
 fi
 
-# --- 7. Verify ---
+# --- 7. Configure Copilot to prefer cgraph tools ---
+step "Configuring Copilot agent instructions..."
+
+INSTRUCTION_TEXT="Use cgraph MCP tools (cgraph_node, cgraph_callers, cgraph_callees, cgraph_search, cgraph_explore, cgraph_context, cgraph_impact, cgraph_trace, cgraph_affected, cgraph_export, cgraph_changed) for code exploration instead of read_file or grep_search. Only use read_file for raw config files or non-code assets."
+
+if grep -q 'codeGeneration.instructions' "$VSCODE_SETTINGS_FILE" 2>/dev/null; then
+    ok "Copilot codeGeneration.instructions already configured"
+elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json
+
+with open('$VSCODE_SETTINGS_FILE', 'r') as f:
+    try:
+        settings = json.load(f)
+    except:
+        settings = {}
+
+settings['github.copilot.chat.codeGeneration.instructions'] = [
+    {'text': '$INSTRUCTION_TEXT'}
+]
+
+with open('$VSCODE_SETTINGS_FILE', 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\\n')
+" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        ok "Added Copilot instruction: prefer cgraph tools for code exploration"
+    else
+        warn "Could not auto-configure Copilot instructions."
+    fi
+else
+    warn "python3 not found — add codeGeneration.instructions manually (see README)"
+fi
+
+# --- 8. Verify ---
 step "Verifying..."
 TEST_VER=$("$BIN_DIR/cgraph" --version 2>&1 || true)
 ok "cgraph $TEST_VER installed!"

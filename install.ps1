@@ -228,7 +228,37 @@ $mcpBlock
         Write-Ok "cgraph is now available in ALL workspaces — no per-project setup needed"
     }
 
-    # --- 7. Verify ---
+    # --- 7. Configure Copilot to prefer cgraph tools ---
+    Write-Step "Configuring Copilot agent instructions..."
+
+    # Re-read settings (may have been updated by MCP step)
+    if (Test-Path $vscodeSettingsFile) {
+        $settingsRaw = (Get-Content $vscodeSettingsFile -Raw -Encoding UTF8).Trim()
+    }
+    if (-not $settingsRaw) { $settingsRaw = '{}' }
+
+    $instructionText = "Use cgraph MCP tools (cgraph_node, cgraph_callers, cgraph_callees, cgraph_search, cgraph_explore, cgraph_context, cgraph_impact, cgraph_trace, cgraph_affected, cgraph_export, cgraph_changed) for code exploration instead of read_file or grep_search. Only use read_file for raw config files or non-code assets."
+
+    if ($settingsRaw -match 'codeGeneration\.instructions') {
+        Write-Ok "Copilot codeGeneration.instructions already configured"
+    } else {
+        $instructionBlock = @"
+  "github.copilot.chat.codeGeneration.instructions": [
+    {
+      "text": "$instructionText"
+    }
+  ]
+"@
+        if ($settingsRaw -eq '{}') {
+            $settingsRaw = "{`n$instructionBlock`n}"
+        } else {
+            $settingsRaw = $settingsRaw -replace '\}\s*$', ",`n$instructionBlock`n}"
+        }
+        $settingsRaw | Set-Content $vscodeSettingsFile -Encoding UTF8
+        Write-Ok "Added Copilot instruction: prefer cgraph tools for code exploration"
+    }
+
+    # --- 8. Verify ---
     Write-Step "Verifying installation..."
     $testOutput = & $launcherPath --version 2>&1 | Out-String
     Write-Ok "cgraph $($testOutput.Trim()) installed successfully!"
