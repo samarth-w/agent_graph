@@ -64,11 +64,11 @@ AI agents waste **70% of tool calls** on `grep` → `read_file` → `grep` → `
 ### 🔌 Install & Forget
 One-command installer. Auto-indexes on first Copilot query. No config per project.
 
-### 🛠️ 17 MCP Tools
-search · context · trace · explore · node · callers · callees · impact · files · status · affected · export · changed · deadcode · cycles · stats · suggest
+### 🛠️ 22 MCP Tools
+search · context · trace · explore · node · callers · callees · impact · files · status · affected · export · changed · deadcode · cycles · stats · suggest · auto-context · intent-search · validate-plan · lint · dna
 
 ### ⚡ Dramatically Faster Workflows
-Collapses multi-step grep→read chains into single precomputed graph queries.
+Collapses multi-step grep→read chains into single precomputed graph queries. Avg MCP tool latency: **17ms**.
 
 </td>
 <td width="50%">
@@ -325,6 +325,7 @@ Drop a `.cgraph.json` in your project root to customize behavior:
 ## 📊 Benchmarks
 
 > Benchmarked on a real-world TypeScript finance app — 16 files, 168 symbols, 1,006 edges.
+> MCP tool latency benchmarked on cgraph's own codebase — 81 files, 687 nodes, 1,282 edges.
 
 <table>
 <tr>
@@ -370,6 +371,19 @@ Drop a `.cgraph.json` in your project root to customize behavior:
 <td align="center">⚡ <strong>5.1x faster</strong></td>
 </tr>
 </table>
+
+### MCP Tool Latency (self-hosted benchmark)
+
+| Metric | Value |
+|:-------|:------|
+| Avg latency (22 tools) | **17ms** |
+| Min latency | **2ms** (search, callees) |
+| Max latency | **103ms** (explore — includes source read) |
+| Cold index + query | **566ms** (auto-index on first call) |
+| Warm re-sync | **288ms** (no-change check) |
+| Burst (10× search) | **6ms/call** |
+
+> Performance powered by bulk adjacency maps — `getFileMap`, `getNodeMap`, `getAdjacencyMaps` load the graph in 3 queries, then all lookups are O(1) map gets. Zero N+1 query patterns.
 
 <details>
 <summary><strong>🏃 Run benchmarks yourself</strong></summary>
@@ -437,6 +451,7 @@ flowchart TB
 | **Smart role classification** | Symbols tagged as `entry` · `core` · `hub` · `bridge` · `utility` · `leaf` · `test` · `dead` |
 | **Bounded traversal** | BFS with `maxDepth` + `maxNodes` caps + cycle detection |
 | **Token-conscious** | Context payloads include estimated token counts so agents can budget |
+| **Bulk query optimization** | Adjacency maps loaded in 3 SQL queries — all per-node lookups are O(1) map gets |
 
 ### Supported Languages
 
@@ -555,7 +570,7 @@ npm run test:watch         # watch tests
 |:-------|:--------|
 | `install.ps1` / `install.sh` | Standalone installer (downloads Node if needed) |
 | `scripts/local-install.ps1` / `.sh` | Build + npm link for dev testing |
-| `scripts/smoke-test.ps1` / `.sh` | 19 end-to-end CLI tests |
+| `scripts/smoke-test.ps1` / `.sh` | 22 end-to-end CLI tests |
 | `scripts/setup-mcp.ps1` | Auto-configure MCP for a project |
 | `scripts/benchmark.mjs` | MCP server latency (22 tools, burst, cold start) |
 | `scripts/benchmark-agent.mjs` | Agent workflow benchmark — with vs without cgraph |
