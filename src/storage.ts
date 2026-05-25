@@ -168,14 +168,14 @@ export class GraphDB {
   // -- file ops ------------------------------------------------------
   upsertFile(
     filePath: string, hash: string, language: string,
-    size: number, mtime: number,
+    size: number, mtime: number, force?: boolean,
   ): { id: number; changed: boolean } {
     const existing = this.get(
       'SELECT id, hash FROM files WHERE path = ?', [filePath],
     ) as { id: number; hash: string } | undefined;
 
     if (existing) {
-      if (existing.hash === hash) return { id: existing.id, changed: false };
+      if (existing.hash === hash && !force) return { id: existing.id, changed: false };
       this.purgeFileData(existing.id);
       this.run(
         'UPDATE files SET hash=?, language=?, size=?, mtime=?, indexed_at=? WHERE id=?',

@@ -85,6 +85,7 @@ export async function indexProject(
         const hash = crypto.createHash('md5').update(content).digest('hex');
         const { id: fileId, changed } = db.upsertFile(
           relNorm, hash, language, stat.size, stat.mtimeMs,
+          opts.force,
         );
 
         if (!changed && !opts.force) continue;
