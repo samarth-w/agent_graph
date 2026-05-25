@@ -305,4 +305,6 @@ db.close();
 
 ## License
 
-MIT
+AGPL-3.0 — see [LICENSE](LICENSE) for details.
+
+If you want to use cgraph in a proprietary/closed-source product, contact the author for a commercial license.
