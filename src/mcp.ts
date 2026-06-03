@@ -22,6 +22,9 @@ import { findChangedSymbols } from './git';
 import { LRUCache } from './cache';
 import { FileWatcher } from './watcher';
 import type { McpToolDef, McpToolResult } from './types';
+import { SmartCrusher, type AgentMode, type ModelCapacity } from './compression/SmartCrusher';
+import { CodeCompressor } from './compression/CodeCompressor';
+import { CCR } from './compression/CCR';
 
 // ─── Input validation ──────────────────────────────────────────
 const MAX_INPUT_LENGTH = 10_000;
@@ -40,6 +43,23 @@ function validateString(value: unknown, name: string, maxLen = MAX_INPUT_LENGTH)
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
+
+const COMMON_COMPRESSION_PARAMS: Record<string, {
+  type: string;
+  description: string;
+  enum?: string[];
+}> = {
+  agent_mode: {
+    type: 'string',
+    enum: ['coding', 'thinking'],
+    description: 'Set to thinking for architecture/docstrings, coding for strict types.',
+  },
+  model_capacity: {
+    type: 'string',
+    enum: ['standard', 'large'],
+    description: 'Set to large for >100k context windows.',
+  },
+};
 
 // ─── Tool definitions ──────────────────────────────────────────
 const TOOLS: McpToolDef[] = [
@@ -65,6 +85,7 @@ const TOOLS: McpToolDef[] = [
         task: { type: 'string', description: 'Description of the task, bug, or feature' },
         maxNodes: { type: 'number', description: 'Max symbols to include (default: 20)', default: 20 },
         includeCode: { type: 'boolean', description: 'Include code snippets (default: true)', default: true },
+        ...COMMON_COMPRESSION_PARAMS,
       },
       required: ['task'],
     },
@@ -90,6 +111,7 @@ const TOOLS: McpToolDef[] = [
       properties: {
         query: { type: 'string', description: 'Symbol names or file names to explore' },
         maxFiles: { type: 'number', description: 'Max files to include source from (default: 12)', default: 12 },
+        ...COMMON_COMPRESSION_PARAMS,
       },
       required: ['query'],
     },
@@ -138,8 +160,20 @@ const TOOLS: McpToolDef[] = [
       properties: {
         symbol: { type: 'string', description: 'Symbol to analyze' },
         depth: { type: 'number', description: 'Traversal depth (default: 2)', default: 2 },
+        ...COMMON_COMPRESSION_PARAMS,
       },
       required: ['symbol'],
+    },
+  },
+  {
+    name: 'cgraph_retrieve_ccr',
+    description: 'Fetch the original, uncompressed code/data using a ccr_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ccr_id: { type: 'string', description: 'CCR entry id returned by compressed responses' },
+      },
+      required: ['ccr_id'],
     },
   },
   {
@@ -380,6 +414,7 @@ class ToolHandler {
         case 'cgraph_context': result = await this.handleContext(args); break;
         case 'cgraph_trace': result = await this.handleTrace(args); break;
         case 'cgraph_explore': result = await this.handleExplore(args); break;
+        case 'cgraph_retrieve_ccr': result = await this.handleRetrieveCcr(args); break;
         case 'cgraph_node': result = await this.handleNode(args); break;
         case 'cgraph_callers': result = await this.handleCallers(args); break;
         case 'cgraph_callees': result = await this.handleCallees(args); break;
@@ -434,7 +469,7 @@ class ToolHandler {
       explicitMaxNodes: args.maxNodes != null ? clamp(Number(args.maxNodes), 1, 200) : undefined,
     });
     const payload = buildContext(db, this.rootDir, task, { maxNodes: adaptive.maxNodes });
-    return this.textResult(JSON.stringify(payload, null, 2));
+    return this.compressAndStore(db, payload, args);
   }
 
   private async handleTrace(args: Record<string, unknown>): Promise<McpToolResult> {
@@ -472,30 +507,13 @@ class ToolHandler {
       maxNodes: adaptive.maxNodes,
     });
     if (result.files.length === 0) return this.textResult(`No relevant code for "${query}"`);
+    return this.compressAndStore(db, result, args);
+  }
 
-    const lines = [`## Explore: ${query}`, ''];
-    if (result.relationships.length > 0) {
-      lines.push('### Relationships');
-      const byKind = new Map<string, { s: string; t: string }[]>();
-      for (const r of result.relationships) {
-        const arr = byKind.get(r.kind) ?? [];
-        arr.push({ s: r.source, t: r.target });
-        byKind.set(r.kind, arr);
-      }
-      for (const [kind, edges] of byKind) {
-        lines.push(`**${kind}:**`);
-        for (const e of edges.slice(0, 10)) lines.push(`- ${e.s} → ${e.t}`);
-        if (edges.length > 10) lines.push(`- ... and ${edges.length - 10} more`);
-        lines.push('');
-      }
-    }
-    lines.push('### Source Code', '');
-    for (const fg of result.files) {
-      const symbolList = fg.symbols.map(s => `${s.name}(${s.kind})`).join(', ');
-      lines.push(`#### ${fg.file} — ${symbolList}`, '', '```' + fg.language, fg.source, '```', '');
-    }
-    lines.push(`> ${result.stats.total_files} files, ${result.stats.total_symbols} symbols, ~${result.stats.estimated_tokens} tokens`);
-    return this.textResult(lines.join('\n'));
+  private async handleRetrieveCcr(args: Record<string, unknown>): Promise<McpToolResult> {
+    const ccrId = validateString(args.ccr_id, 'ccr_id', 128);
+    const db = await this.getDb();
+    return this.textResult(CCR.retrieve(db, ccrId));
   }
 
   private async handleNode(args: Record<string, unknown>): Promise<McpToolResult> {
@@ -564,16 +582,7 @@ class ToolHandler {
     });
     const result = analyzeImpact(db, symbol, { maxDepth: adaptive.maxDepth, maxNodes: adaptive.maxNodes });
     if (result.impacted_nodes.length === 0) return this.textResult(`No impact found for "${symbol}"`);
-    const lines = [
-      `## Impact Analysis: ${symbol}`, '',
-      `**Impacted files (${result.impacted_files.length}):** ${result.impacted_files.join(', ')}`, '',
-      `**Impacted symbols (${result.impacted_nodes.length}):**`,
-    ];
-    for (const n of result.impacted_nodes.slice(0, 30)) {
-      lines.push(`- ${n.name} (${n.kind}) — ${n.file_path}:${n.start_line}`);
-    }
-    if (result.truncated) lines.push('', '... (truncated)');
-    return this.textResult(lines.join('\n'));
+    return this.compressAndStore(db, result, args);
   }
 
   private async handleFiles(args: Record<string, unknown>): Promise<McpToolResult> {
@@ -908,6 +917,60 @@ class ToolHandler {
 
   private textResult(text: string): McpToolResult {
     return { content: [{ type: 'text', text }] };
+  }
+
+  private compressAndStore(
+    db: GraphDB,
+    rawResult: unknown,
+    args: Record<string, unknown>,
+  ): McpToolResult {
+    const { mode, capacity } = this.getCompressionProfile(args);
+    const ccrId = CCR.save(db, rawResult);
+    const crushed = SmartCrusher.crush(rawResult, mode, capacity);
+    this.compressEmbeddedSource(crushed, mode);
+
+    const resultObj = (crushed && typeof crushed === 'object')
+      ? crushed as Record<string, unknown>
+      : { value: crushed };
+    resultObj._ccr_info = `Data compressed. To see uncompressed implementation, use tool cgraph_retrieve_ccr with ccr_id: ${ccrId}`;
+
+    return this.textResult(JSON.stringify(resultObj, null, 2));
+  }
+
+  private getCompressionProfile(args: Record<string, unknown>): {
+    mode: AgentMode;
+    capacity: ModelCapacity;
+  } {
+    const mode = args.agent_mode === 'thinking' ? 'thinking' : 'coding';
+    const capacity = args.model_capacity === 'large' ? 'large' : 'standard';
+    return { mode, capacity };
+  }
+
+  private compressEmbeddedSource(data: unknown, mode: AgentMode): void {
+    if (!data || typeof data !== 'object') return;
+    const payload = data as Record<string, unknown>;
+
+    if (Array.isArray(payload.files)) {
+      for (const entry of payload.files) {
+        if (entry && typeof entry === 'object') {
+          const fileEntry = entry as Record<string, unknown>;
+          if (typeof fileEntry.source === 'string') {
+            fileEntry.source = CodeCompressor.skeletonize(fileEntry.source, mode);
+          }
+        }
+      }
+    }
+
+    if (Array.isArray(payload.snippets)) {
+      for (const entry of payload.snippets) {
+        if (entry && typeof entry === 'object') {
+          const snippetEntry = entry as Record<string, unknown>;
+          if (typeof snippetEntry.content === 'string') {
+            snippetEntry.content = CodeCompressor.skeletonize(snippetEntry.content, mode);
+          }
+        }
+      }
+    }
   }
 
   private errorResult(message: string): McpToolResult {

@@ -73,6 +73,14 @@ CREATE TABLE IF NOT EXISTS metadata (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ccr_cache (
+  id            TEXT PRIMARY KEY,
+  original_data TEXT NOT NULL,
+  timestamp     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ccr_timestamp ON ccr_cache(timestamp);
 `;
 
 // --- Singleton WASM loader ------------------------------------------
@@ -179,6 +187,21 @@ export class GraphDB {
       this.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  // -- CCR cache -----------------------------------------------------
+  saveCcrEntry(id: string, originalData: string): void {
+    this.run(
+      'INSERT OR REPLACE INTO ccr_cache (id, original_data, timestamp) VALUES (?, ?, ?)',
+      [id, originalData, Date.now()],
+    );
+  }
+
+  getCcrEntry(id: string): string | undefined {
+    const row = this.get('SELECT original_data FROM ccr_cache WHERE id = ?', [id]) as
+      | { original_data?: string }
+      | undefined;
+    return row?.original_data;
   }
 
   // -- file ops ------------------------------------------------------

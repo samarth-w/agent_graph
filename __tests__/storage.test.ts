@@ -175,4 +175,15 @@ describe('GraphDB', () => {
       expect(nodes.length).toBe(0);
     });
   });
+
+  describe('CCR cache', () => {
+    it('stores and retrieves CCR entries', () => {
+      db.saveCcrEntry('ccr_test', '{"hello":"world"}');
+      expect(db.getCcrEntry('ccr_test')).toBe('{"hello":"world"}');
+    });
+
+    it('returns undefined for missing CCR entries', () => {
+      expect(db.getCcrEntry('ccr_missing')).toBeUndefined();
+    });
+  });
 });
