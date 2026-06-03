@@ -73,10 +73,17 @@ CREATE TABLE IF NOT EXISTS metadata (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ccr_cache (
+  id            TEXT PRIMARY KEY,
+  original_data TEXT NOT NULL,
+  timestamp     INTEGER NOT NULL
+);
 `;
 
 // --- Singleton WASM loader ------------------------------------------
 let sqlPromise: ReturnType<typeof initSqlJs> | null = null;
+const CCR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 function loadSql() {
   if (!sqlPromise) sqlPromise = initSqlJs();
   return sqlPromise;
@@ -613,6 +620,24 @@ export class GraphDB {
   getMeta(key: string): string | undefined {
     const row = this.get('SELECT value FROM metadata WHERE key = ?', [key]);
     return row?.value as string | undefined;
+  }
+
+  saveCCR(id: string, originalData: string, timestamp: number): void {
+    this.cleanupOldCCR(CCR_MAX_AGE_MS, timestamp);
+    this.run(
+      'INSERT OR REPLACE INTO ccr_cache (id, original_data, timestamp) VALUES (?, ?, ?)',
+      [id, originalData, timestamp],
+    );
+  }
+
+  getCCR(id: string): string | undefined {
+    const row = this.get('SELECT original_data FROM ccr_cache WHERE id = ?', [id]);
+    return row?.original_data as string | undefined;
+  }
+
+  cleanupOldCCR(maxAgeMs: number, now = Date.now()): void {
+    const cutoff = now - maxAgeMs;
+    this.run('DELETE FROM ccr_cache WHERE timestamp < ?', [cutoff]);
   }
 
   close(): void {

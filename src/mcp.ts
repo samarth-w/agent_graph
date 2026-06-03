@@ -22,6 +22,9 @@ import { findChangedSymbols } from './git';
 import { LRUCache } from './cache';
 import { FileWatcher } from './watcher';
 import type { McpToolDef, McpToolResult } from './types';
+import { SmartCrusher } from './compression/SmartCrusher';
+import { CodeCompressor } from './compression/CodeCompressor';
+import { CCR } from './compression/CCR';
 
 // ─── Input validation ──────────────────────────────────────────
 const MAX_INPUT_LENGTH = 10_000;
@@ -40,6 +43,23 @@ function validateString(value: unknown, name: string, maxLen = MAX_INPUT_LENGTH)
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
+
+const COMPRESSION_PARAMS: Record<string, {
+  type: string;
+  description: string;
+  enum?: string[];
+}> = {
+  agent_mode: {
+    type: 'string',
+    enum: ['coding', 'thinking'],
+    description: 'Compression profile: coding for signatures, thinking for docs and architecture context.',
+  },
+  model_capacity: {
+    type: 'string',
+    enum: ['standard', 'large'],
+    description: 'Context capacity profile. Large keeps more items before truncation.',
+  },
+};
 
 // ─── Tool definitions ──────────────────────────────────────────
 const TOOLS: McpToolDef[] = [
@@ -65,6 +85,7 @@ const TOOLS: McpToolDef[] = [
         task: { type: 'string', description: 'Description of the task, bug, or feature' },
         maxNodes: { type: 'number', description: 'Max symbols to include (default: 20)', default: 20 },
         includeCode: { type: 'boolean', description: 'Include code snippets (default: true)', default: true },
+        ...COMPRESSION_PARAMS,
       },
       required: ['task'],
     },
@@ -90,6 +111,7 @@ const TOOLS: McpToolDef[] = [
       properties: {
         query: { type: 'string', description: 'Symbol names or file names to explore' },
         maxFiles: { type: 'number', description: 'Max files to include source from (default: 12)', default: 12 },
+        ...COMPRESSION_PARAMS,
       },
       required: ['query'],
     },
@@ -138,8 +160,20 @@ const TOOLS: McpToolDef[] = [
       properties: {
         symbol: { type: 'string', description: 'Symbol to analyze' },
         depth: { type: 'number', description: 'Traversal depth (default: 2)', default: 2 },
+        ...COMPRESSION_PARAMS,
       },
       required: ['symbol'],
+    },
+  },
+  {
+    name: 'cgraph_retrieve_ccr',
+    description: 'Fetch the original uncompressed payload previously saved in CCR by ccr_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ccr_id: { type: 'string', description: 'CCR payload identifier returned by compressed tool responses' },
+      },
+      required: ['ccr_id'],
     },
   },
   {
@@ -362,6 +396,7 @@ class ToolHandler {
     'cgraph_node', 'cgraph_trace', 'cgraph_files', 'cgraph_status', 'cgraph_export',
     'cgraph_deadcode', 'cgraph_cycles', 'cgraph_stats', 'cgraph_suggest',
     'cgraph_auto_context', 'cgraph_intent_search', 'cgraph_validate_plan', 'cgraph_lint', 'cgraph_dna',
+    'cgraph_retrieve_ccr',
   ]);
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
@@ -384,6 +419,7 @@ class ToolHandler {
         case 'cgraph_callers': result = await this.handleCallers(args); break;
         case 'cgraph_callees': result = await this.handleCallees(args); break;
         case 'cgraph_impact': result = await this.handleImpact(args); break;
+        case 'cgraph_retrieve_ccr': result = await this.handleRetrieveCCR(args); break;
         case 'cgraph_files': result = await this.handleFiles(args); break;
         case 'cgraph_status': result = await this.handleStatus(args); break;
         case 'cgraph_affected': result = await this.handleAffected(args); break;
@@ -434,7 +470,7 @@ class ToolHandler {
       explicitMaxNodes: args.maxNodes != null ? clamp(Number(args.maxNodes), 1, 200) : undefined,
     });
     const payload = buildContext(db, this.rootDir, task, { maxNodes: adaptive.maxNodes });
-    return this.textResult(JSON.stringify(payload, null, 2));
+    return this.compressedResult(db, args, payload);
   }
 
   private async handleTrace(args: Record<string, unknown>): Promise<McpToolResult> {
@@ -472,30 +508,7 @@ class ToolHandler {
       maxNodes: adaptive.maxNodes,
     });
     if (result.files.length === 0) return this.textResult(`No relevant code for "${query}"`);
-
-    const lines = [`## Explore: ${query}`, ''];
-    if (result.relationships.length > 0) {
-      lines.push('### Relationships');
-      const byKind = new Map<string, { s: string; t: string }[]>();
-      for (const r of result.relationships) {
-        const arr = byKind.get(r.kind) ?? [];
-        arr.push({ s: r.source, t: r.target });
-        byKind.set(r.kind, arr);
-      }
-      for (const [kind, edges] of byKind) {
-        lines.push(`**${kind}:**`);
-        for (const e of edges.slice(0, 10)) lines.push(`- ${e.s} → ${e.t}`);
-        if (edges.length > 10) lines.push(`- ... and ${edges.length - 10} more`);
-        lines.push('');
-      }
-    }
-    lines.push('### Source Code', '');
-    for (const fg of result.files) {
-      const symbolList = fg.symbols.map(s => `${s.name}(${s.kind})`).join(', ');
-      lines.push(`#### ${fg.file} — ${symbolList}`, '', '```' + fg.language, fg.source, '```', '');
-    }
-    lines.push(`> ${result.stats.total_files} files, ${result.stats.total_symbols} symbols, ~${result.stats.estimated_tokens} tokens`);
-    return this.textResult(lines.join('\n'));
+    return this.compressedResult(db, args, result);
   }
 
   private async handleNode(args: Record<string, unknown>): Promise<McpToolResult> {
@@ -564,16 +577,7 @@ class ToolHandler {
     });
     const result = analyzeImpact(db, symbol, { maxDepth: adaptive.maxDepth, maxNodes: adaptive.maxNodes });
     if (result.impacted_nodes.length === 0) return this.textResult(`No impact found for "${symbol}"`);
-    const lines = [
-      `## Impact Analysis: ${symbol}`, '',
-      `**Impacted files (${result.impacted_files.length}):** ${result.impacted_files.join(', ')}`, '',
-      `**Impacted symbols (${result.impacted_nodes.length}):**`,
-    ];
-    for (const n of result.impacted_nodes.slice(0, 30)) {
-      lines.push(`- ${n.name} (${n.kind}) — ${n.file_path}:${n.start_line}`);
-    }
-    if (result.truncated) lines.push('', '... (truncated)');
-    return this.textResult(lines.join('\n'));
+    return this.compressedResult(db, args, result);
   }
 
   private async handleFiles(args: Record<string, unknown>): Promise<McpToolResult> {
@@ -896,6 +900,61 @@ class ToolHandler {
     }
     lines.push('', '### Summary', dna.summary);
     return this.textResult(lines.join('\n'));
+  }
+
+  private async handleRetrieveCCR(args: Record<string, unknown>): Promise<McpToolResult> {
+    const ccrId = validateString(args.ccr_id, 'ccr_id', 256);
+    const db = await this.getDb();
+    const data = CCR.retrieve(db, ccrId);
+    if (data == null) {
+      return this.errorResult(
+        'Compressed data not found or expired. The requested ccr_id may be invalid or cleaned up.',
+      );
+    }
+    return this.textResult(data);
+  }
+
+  private getCompressionProfile(args: Record<string, unknown>): {
+    mode: 'coding' | 'thinking';
+    capacity: 'standard' | 'large';
+  } {
+    const mode = args.agent_mode === 'thinking' ? 'thinking' : 'coding';
+    const capacity = args.model_capacity === 'large' ? 'large' : 'standard';
+    return { mode, capacity };
+  }
+
+  private applyCodeCompression(data: unknown, mode: 'coding' | 'thinking'): unknown {
+    if (Array.isArray(data)) {
+      return data.map(item => this.applyCodeCompression(item, mode));
+    }
+    if (!data || typeof data !== 'object') return data;
+
+    const source = data as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(source)) {
+      if (typeof v === 'string' && (k === 'source' || k === 'code')) {
+        out[k] = CodeCompressor.skeletonize(v, mode);
+      } else {
+        out[k] = this.applyCodeCompression(v, mode);
+      }
+    }
+    return out;
+  }
+
+  private compressedResult(db: GraphDB, args: Record<string, unknown>, rawResult: unknown): McpToolResult {
+    const { mode, capacity } = this.getCompressionProfile(args);
+    const ccrId = CCR.save(db, rawResult);
+    const crushed = SmartCrusher.crush(rawResult, mode, capacity);
+    const payload = this.applyCodeCompression(crushed, mode);
+    return this.textResult(JSON.stringify({
+      data: payload,
+      meta: {
+        ccr_id: ccrId,
+        agent_mode: mode,
+        model_capacity: capacity,
+        info: 'Data compressed. Use cgraph_retrieve_ccr with this ccr_id for uncompressed data.',
+      },
+    }, null, 2));
   }
 
   private formatNodeList(nodes: { name: string; qualified_name: string; kind: string; file_path: string; start_line: number }[], title: string): string {
