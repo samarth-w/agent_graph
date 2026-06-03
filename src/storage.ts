@@ -73,6 +73,12 @@ CREATE TABLE IF NOT EXISTS metadata (
   key   TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS ccr_cache (
+  id            TEXT PRIMARY KEY,
+  original_data TEXT NOT NULL,
+  timestamp     INTEGER NOT NULL
+);
 `;
 
 // --- Singleton WASM loader ------------------------------------------
@@ -613,6 +619,18 @@ export class GraphDB {
   getMeta(key: string): string | undefined {
     const row = this.get('SELECT value FROM metadata WHERE key = ?', [key]);
     return row?.value as string | undefined;
+  }
+
+  saveCCR(id: string, originalData: string, timestamp: number): void {
+    this.run(
+      'INSERT OR REPLACE INTO ccr_cache (id, original_data, timestamp) VALUES (?, ?, ?)',
+      [id, originalData, timestamp],
+    );
+  }
+
+  getCCR(id: string): string | undefined {
+    const row = this.get('SELECT original_data FROM ccr_cache WHERE id = ?', [id]);
+    return row?.original_data as string | undefined;
   }
 
   close(): void {
