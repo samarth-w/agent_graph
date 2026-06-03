@@ -905,7 +905,13 @@ class ToolHandler {
   private async handleRetrieveCCR(args: Record<string, unknown>): Promise<McpToolResult> {
     const ccrId = validateString(args.ccr_id, 'ccr_id', 256);
     const db = await this.getDb();
-    return this.textResult(CCR.retrieve(db, ccrId));
+    const data = CCR.retrieve(db, ccrId);
+    if (data == null) {
+      return this.errorResult(
+        'Compressed data not found or expired. The requested ccr_id may be invalid or cleaned up.',
+      );
+    }
+    return this.textResult(data);
   }
 
   private getCompressionProfile(args: Record<string, unknown>): {
@@ -939,12 +945,16 @@ class ToolHandler {
     const { mode, capacity } = this.getCompressionProfile(args);
     const ccrId = CCR.save(db, rawResult);
     const crushed = SmartCrusher.crush(rawResult, mode, capacity);
-    const codeCompressed = this.applyCodeCompression(crushed, mode);
-    const payload = codeCompressed && typeof codeCompressed === 'object'
-      ? codeCompressed as Record<string, unknown>
-      : { value: codeCompressed };
-    payload._ccr_info = `Data compressed. Use cgraph_retrieve_ccr with ccr_id: ${ccrId} for uncompressed data.`;
-    return this.textResult(JSON.stringify(payload, null, 2));
+    const payload = this.applyCodeCompression(crushed, mode);
+    return this.textResult(JSON.stringify({
+      data: payload,
+      meta: {
+        ccr_id: ccrId,
+        agent_mode: mode,
+        model_capacity: capacity,
+        info: 'Data compressed. Use cgraph_retrieve_ccr with this ccr_id for uncompressed data.',
+      },
+    }, null, 2));
   }
 
   private formatNodeList(nodes: { name: string; qualified_name: string; kind: string; file_path: string; start_line: number }[], title: string): string {

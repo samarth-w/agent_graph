@@ -6,7 +6,9 @@ export class SmartCrusher {
     if (Array.isArray(data)) {
       if (data.length > maxLen) {
         const truncated = data.slice(0, maxLen).map(item => this.crush(item, mode, capacity));
-        truncated.push(`... [${data.length - maxLen} omitted for token limits. Use CCR retrieve if needed.]`);
+        truncated.push({
+          _truncated: `${data.length - maxLen} omitted for token limits. Use cgraph_retrieve_ccr if needed.`,
+        });
         return truncated;
       }
       return data.map(item => this.crush(item, mode, capacity));

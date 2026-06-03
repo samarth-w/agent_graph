@@ -8,9 +8,8 @@ export class CCR {
     return id;
   }
 
-  static retrieve(db: GraphDB, id: string): string {
+  static retrieve(db: GraphDB, id: string): string | undefined {
     const data = db.getCCR(id);
-    if (data != null) return data;
-    return JSON.stringify({ error: 'CCR cache miss' });
+    return data;
   }
 }

@@ -1,6 +1,7 @@
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import generate from '@babel/generator';
+import * as t from '@babel/types';
 
 export class CodeCompressor {
   static skeletonize(code: string, mode: 'coding' | 'thinking'): string {
@@ -12,23 +13,17 @@ export class CodeCompressor {
 
       traverse(ast, {
         Function(path) {
-          (path.node as any).body = {
-            type: 'BlockStatement',
-            body: [
-              {
-                type: 'EmptyStatement',
-                trailingComments: [{ type: 'CommentBlock', value: ' omitted ' }],
-              },
-            ],
-          };
+          const empty = t.emptyStatement();
+          t.addComment(empty, 'trailing', ' body omitted ');
+          path.node.body = t.blockStatement([empty]);
 
           if (path.isArrowFunctionExpression()) {
-            (path.node as any).expression = false;
+            path.node.expression = false;
           }
         },
         enter(path) {
           if (mode === 'coding' && path.node.leadingComments) {
-            path.node.leadingComments = null;
+            path.node.leadingComments = undefined;
           }
         },
       });
