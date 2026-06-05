@@ -39,16 +39,16 @@ class Database:
         """)
         self.conn.commit()
 
-    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def query(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         conn = self.connect()
         return conn.execute(sql, params)
 
     def fetch_all(self, sql: str, params: tuple = ()) -> List[Dict[str, Any]]:
-        cursor = self.execute(sql, params)
+        cursor = self.query(sql, params)
         return [dict(row) for row in cursor.fetchall()]
 
     def fetch_one(self, sql: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
-        cursor = self.execute(sql, params)
+        cursor = self.query(sql, params)
         row = cursor.fetchone()
         return dict(row) if row else None
 

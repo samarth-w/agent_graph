@@ -104,6 +104,29 @@ export function searchSymbols(
     }
   }
 
+  // CamelCase boundary fallback: split 'findCallers' → ['find', 'callers'] and
+  // search each token independently when exact + fuzzy both return < 3 results.
+  if (results.length < 3 && searchTerms && searchTerms !== '*') {
+    const camelTokens = searchTerms
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(t => t.length >= 3);
+    if (camelTokens.length > 1) {
+      const seen = new Set(results.map(r => r.node.id));
+      for (const token of camelTokens) {
+        const tokenResults = db.ftsSearch(token, limit);
+        for (const tr of tokenResults) {
+          if (!seen.has(tr.node.id)) {
+            seen.add(tr.node.id);
+            results.push({ ...tr, rank: tr.rank * 0.7 }); // slight discount for partial match
+          }
+        }
+      }
+    }
+  }
+
   return results.slice(0, limit);
 }
 

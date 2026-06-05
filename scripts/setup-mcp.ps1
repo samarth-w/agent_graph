@@ -6,7 +6,8 @@
 #>
 param(
     [Parameter(Mandatory=$true, Position=0)]
-    [string]$ProjectPath
+    [string]$ProjectPath,
+    [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,10 +38,14 @@ if (Test-Path $mcpFile) {
     if ($existing.servers.cgraph) {
         Write-Host "cgraph already configured in $mcpFile" -ForegroundColor Yellow
         Write-Host "Current command: $($existing.servers.cgraph.command)"
-        $answer = Read-Host "Overwrite? (y/N)"
-        if ($answer -ne 'y') {
-            Write-Host "Skipped."
-            exit 0
+        if (-not $Force) {
+            $answer = Read-Host "Overwrite? (y/N)"
+            if ($answer -ne 'y') {
+                Write-Host "Skipped."
+                exit 0
+            }
+        } else {
+            Write-Host "Force mode enabled: overwriting existing cgraph MCP config." -ForegroundColor Yellow
         }
     }
 }
@@ -62,4 +67,4 @@ Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  1. Open the project in VS Code"
 Write-Host "  2. Run: cgraph index    (from the project directory)"
-Write-Host "  3. Restart VS Code — cgraph tools appear in Copilot Chat"
+Write-Host "  3. Restart VS Code - cgraph tools appear in Copilot Chat"

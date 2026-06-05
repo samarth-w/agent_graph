@@ -113,13 +113,19 @@ export class FileWatcher {
 
   private scheduleSync(): void {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.runSync(), this.debounceMs);
+    this.timer = setTimeout(async () => {
+      this.timer = null;
+      await this.runSync();
+      // Re-arm if more changes accumulated during the sync
+      if (!this.stopped && this.changedFiles.size > 0 && !this.timer) {
+        this.scheduleSync();
+      }
+    }, this.debounceMs);
   }
 
   private async runSync(): Promise<void> {
     if (this.syncing || this.stopped || this.changedFiles.size === 0) return;
     this.syncing = true;
-    const count = this.changedFiles.size;
     this.changedFiles.clear();
 
     try {
@@ -132,8 +138,6 @@ export class FileWatcher {
       this.onError?.(err);
     } finally {
       this.syncing = false;
-      // If more changes came in while syncing, re-sync
-      if (this.changedFiles.size > 0) this.scheduleSync();
     }
   }
 

@@ -171,6 +171,10 @@ export interface ContextStats {
   total_edges: number;
   total_files: number;
   estimated_tokens: number;
+  /** 'high' = ≥2 FTS seeds matched; 'low' = weak or single-term match */
+  confidence?: 'high' | 'low';
+  /** edges / nodes ratio — proxy for context richness */
+  edge_density?: number;
 }
 
 // ─── Status ────────────────────────────────────────────────────

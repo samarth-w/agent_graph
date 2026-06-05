@@ -28,163 +28,143 @@ export interface IndexResult {
   duration_ms: number;
 }
 
+// ─── indexProject pipeline helpers ─────────────────────────────
+
+interface PendingFile {
+  fileId: number;
+  content: string;
+  language: string;
+  relNorm: string;
+}
+
+/** Phase 1: discover source files respecting .gitignore and config ignore paths */
+async function discoverFiles(rootDir: string, cfg: GraphConfig): Promise<string[]> {
+  const ignoreFilter = buildIgnoreFilter(rootDir);
+  const patterns = cfg.extensions.map(ext => `**/*${ext}`);
+  const ignore = cfg.ignorePaths.map(p => `**/${p}/**`);
+  return (await fg(patterns, { cwd: rootDir, ignore, absolute: false, dot: false }))
+    .filter(fp => !ignoreFilter.ignores(fp));
+}
+
+/** Phase 2: determine which files need re-parsing using 3-tier change detection */
+function collectPendingFiles(
+  db: GraphDB, rootDir: string, filePaths: string[],
+  opts: { force?: boolean },
+): { pending: PendingFile[]; filesChanged: number } {
+  let filesChanged = 0;
+  const pending: PendingFile[] = [];
+
+  db.transaction(() => {
+    for (const rel of filePaths) {
+      const relNorm = normSlash(rel);
+      const abs = path.resolve(rootDir, rel);
+      const stat = fs.statSync(abs);
+      const language = detectLanguage(rel);
+      if (!language) continue;
+
+      if (!opts.force) {
+        const existing = db.getFile(relNorm);
+        if (existing && existing.mtime === stat.mtimeMs && existing.size === stat.size) continue;
+      }
+
+      const content = fs.readFileSync(abs, 'utf-8');
+      const hash = crypto.createHash('md5').update(content).digest('hex');
+      const { id: fileId, changed } = db.upsertFile(relNorm, hash, language, stat.size, stat.mtimeMs, opts.force);
+
+      if (!changed && !opts.force) continue;
+      filesChanged++;
+      pending.push({ fileId, content, language, relNorm });
+    }
+  });
+
+  return { pending, filesChanged };
+}
+
+/** Phase 3: parse files — parallel for large batches, serial for small ones */
+async function executeParsePhase(
+  pending: PendingFile[],
+): Promise<Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }>> {
+  const WORKER_THRESHOLD = 8;
+  const parseResults: Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }> = new Map();
+
+  if (pending.length >= WORKER_THRESHOLD) {
+    const results = await parseFilesParallel(pending);
+    for (const r of results) parseResults.set(r.fileId, r);
+  } else {
+    for (const p of pending) {
+      const result = parseFile(p.content, p.language, p.relNorm);
+      parseResults.set(p.fileId, { fileId: p.fileId, relNorm: p.relNorm, content: p.content, result });
+    }
+  }
+  return parseResults;
+}
+
+/** Phase 4: store symbols, routes, edges into the DB */
+function storeParsePhase(
+  db: GraphDB,
+  parseResults: Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }>,
+  allParseData: Map<number, { calls: ParsedCall[]; imports: ParsedImport[]; symbols: ParsedSymbol[]; relPath: string }>,
+): void {
+  db.transaction(() => {
+    for (const [fileId, { relNorm, content, result }] of parseResults) {
+      const language = detectLanguage(relNorm) ?? '';
+      for (const route of extractRoutes(content, relNorm, language)) {
+        db.insertNode(fileId, `${route.method} ${route.pattern}`,
+          `${relNorm}::route:${route.pattern}`, 'route',
+          route.line, route.line, `${route.method} ${route.pattern}`, null, true);
+        db.insertRawRef(fileId, 'call', `${relNorm}::route:${route.pattern}`,
+          route.handler, null, null, route.line);
+      }
+      for (const se of synthesizeEdges(result.calls, relNorm)) {
+        db.insertRawRef(fileId, 'call', se.sourceQName, se.targetName, null, null, se.line);
+      }
+      storeSymbols(db, fileId, result.symbols);
+      storeRawRefs(db, fileId, relNorm, result);
+      allParseData.set(fileId, { calls: result.calls, imports: result.imports, symbols: result.symbols, relPath: relNorm });
+    }
+  });
+}
+
+/** Phase 5: resolve cross-file edges and classify symbol roles */
+function resolveAndClassify(
+  db: GraphDB, rootDir: string,
+  changedFileIds: number[], filePaths: string[],
+  opts: { force?: boolean },
+): void {
+  const incrementalThreshold = Math.max(10, Math.floor(filePaths.length * 0.2));
+  db.transaction(() => {
+    if (changedFileIds.length > 0 && changedFileIds.length <= incrementalThreshold && !opts.force) {
+      db.clearEdgesForFiles(changedFileIds);
+    } else {
+      db.clearAllEdges();
+    }
+    resolveEdges(db, rootDir);
+  });
+  db.transaction(() => classifyRoles(db));
+}
+
 export async function indexProject(
   rootDir: string,
   opts: { force?: boolean; config?: Partial<GraphConfig> } = {},
 ): Promise<IndexResult> {
   const t0 = Date.now();
   const cfg = { ...loadConfig(rootDir), ...opts.config };
-  const dbPath = getDbPath(rootDir);
-  const db = await GraphDB.open(dbPath);
+  const db = await GraphDB.open(getDbPath(rootDir));
 
   try {
-    // 1. Discover files (use .gitignore if available)
-    const ignoreFilter = buildIgnoreFilter(rootDir);
-    const patterns = cfg.extensions.map(ext => `**/*${ext}`);
-    const ignore = cfg.ignorePaths.map(p => `**/${p}/**`);
-    const filePaths = (await fg(patterns, {
-      cwd: rootDir,
-      ignore,
-      absolute: false,
-      dot: false,
-    })).filter(fp => !ignoreFilter.ignores(fp));
-
+    const filePaths  = await discoverFiles(rootDir, cfg);
     const knownPaths = new Set(filePaths.map(normSlash));
 
-    // 2. Remove stale files
     const filesRemoved = db.transaction(() => db.removeStaleFiles(knownPaths));
+    const { pending, filesChanged } = collectPendingFiles(db, rootDir, filePaths, opts);
 
-    // 3. Parse changed files
-    let filesChanged = 0;
-    const allParseData: Map<number, {
-      calls: ParsedCall[];
-      imports: ParsedImport[];
-      symbols: ParsedSymbol[];
-      relPath: string;
-    }> = new Map();
-
-    // 3a. Collect files that need re-parsing (read content + upsert file records)
-    interface PendingFile {
-      fileId: number;
-      content: string;
-      language: string;
-      relNorm: string;
-    }
-    const pending: PendingFile[] = [];
-
-    db.transaction(() => {
-      for (const rel of filePaths) {
-        const relNorm = normSlash(rel);
-        const abs = path.resolve(rootDir, rel);
-        const stat = fs.statSync(abs);
-        const language = detectLanguage(rel);
-        if (!language) continue;
-
-        // Tier-1: mtime+size fast check (skip hash if unchanged)
-        if (!opts.force) {
-          const existing = db.getFile(relNorm);
-          if (existing &&
-              existing.mtime === stat.mtimeMs &&
-              existing.size === stat.size) {
-            continue;
-          }
-        }
-
-        // Tier-2: read + hash
-        const content = fs.readFileSync(abs, 'utf-8');
-        const hash = crypto.createHash('md5').update(content).digest('hex');
-        const { id: fileId, changed } = db.upsertFile(
-          relNorm, hash, language, stat.size, stat.mtimeMs,
-          opts.force,
-        );
-
-        if (!changed && !opts.force) continue;
-        filesChanged++;
-        pending.push({ fileId, content, language, relNorm });
-      }
-    });
-
-    // 3b. Parse files (parallel with workers if enough files, else single-threaded)
-    const WORKER_THRESHOLD = 8;
-    const parseResults: Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }> = new Map();
-
-    if (pending.length >= WORKER_THRESHOLD) {
-      const results = await parseFilesParallel(pending);
-      for (const r of results) {
-        parseResults.set(r.fileId, r);
-      }
-    } else {
-      for (const p of pending) {
-        const result = parseFile(p.content, p.language, p.relNorm);
-        parseResults.set(p.fileId, { fileId: p.fileId, relNorm: p.relNorm, content: p.content, result });
-      }
-    }
-
-    // 3c. Store parse results in DB (single-threaded)
-    db.transaction(() => {
-      for (const [fileId, { relNorm, content, result }] of parseResults) {
-        // Extract framework routes
-        const language = detectLanguage(relNorm) ?? '';
-        const routes = extractRoutes(content, relNorm, language);
-        for (const route of routes) {
-          db.insertNode(
-            fileId, `${route.method} ${route.pattern}`,
-            `${relNorm}::route:${route.pattern}`, 'route',
-            route.line, route.line,
-            `${route.method} ${route.pattern}`, null, true,
-          );
-          db.insertRawRef(fileId, 'call', `${relNorm}::route:${route.pattern}`,
-            route.handler, null, null, route.line);
-        }
-
-        // Synthesize dynamic dispatch edges
-        const synthEdges = synthesizeEdges(result.calls, relNorm);
-        for (const se of synthEdges) {
-          db.insertRawRef(fileId, 'call', se.sourceQName,
-            se.targetName, null, null, se.line);
-        }
-
-        // Store symbols
-        storeSymbols(db, fileId, result.symbols);
-
-        // Store raw_refs (calls + imports + extends)
-        storeRawRefs(db, fileId, relNorm, result);
-
-        allParseData.set(fileId, {
-          calls: result.calls,
-          imports: result.imports,
-          symbols: result.symbols,
-          relPath: relNorm,
-        });
-      }
-    });
-
-    // 4. Resolve edges
-    // Incremental: if few files changed, only re-resolve edges involving those files
-    // Full rebuild: if many files changed or forced
-    const changedFileIds = [...parseResults.keys()];
-    const incrementalThreshold = Math.max(10, Math.floor(filePaths.length * 0.2));
-
-    db.transaction(() => {
-      if (changedFileIds.length > 0 && changedFileIds.length <= incrementalThreshold && !opts.force) {
-        // Incremental: clear only edges touching changed files, then full re-resolve
-        // (raw_refs are already up to date; re-resolve is safe because lookup maps are global)
-        db.clearEdgesForFiles(changedFileIds);
-        resolveEdges(db, rootDir);
-      } else {
-        // Full rebuild
-        db.clearAllEdges();
-        resolveEdges(db, rootDir);
-      }
-    });
-
-    // 5. Classify roles
-    db.transaction(() => classifyRoles(db));
+    const allParseData: Map<number, { calls: ParsedCall[]; imports: ParsedImport[]; symbols: ParsedSymbol[]; relPath: string }> = new Map();
+    const parseResults = await executeParsePhase(pending);
+    storeParsePhase(db, parseResults, allParseData);
+    resolveAndClassify(db, rootDir, [...parseResults.keys()], filePaths, opts);
 
     db.setMeta('last_index', new Date().toISOString());
-
     const status = db.getStatus(rootDir);
-
     return {
       files_scanned: filePaths.length,
       files_changed: filesChanged,
@@ -197,6 +177,7 @@ export async function indexProject(
     db.close();
   }
 }
+
 
 // ─── store symbols recursively ──────────────────────────────────
 function storeSymbols(db: GraphDB, fileId: number, symbols: ParsedSymbol[]): void {

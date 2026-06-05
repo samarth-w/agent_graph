@@ -336,11 +336,38 @@ class ToolHandler {
   private cache = new LRUCache<McpToolResult>(64, 30_000);
   private watcher: FileWatcher | null = null;
   private dirty = false; // set true by watcher, cleared after db swap
+  private readonly dispatch: Map<string, (args: Record<string, unknown>) => Promise<McpToolResult>>;
 
   /** Progress callback set by MCP server for notifications. */
   onProgress: ((token: string | number, message: string, percentage?: number) => void) | null = null;
 
-  constructor(private rootDir: string) {}
+  constructor(private rootDir: string) {
+    this.dispatch = new Map([
+      ['cgraph_search',        (a) => this.handleSearch(a)],
+      ['cgraph_context',       (a) => this.handleContext(a)],
+      ['cgraph_trace',         (a) => this.handleTrace(a)],
+      ['cgraph_explore',       (a) => this.handleExplore(a)],
+      ['cgraph_node',          (a) => this.handleNode(a)],
+      ['cgraph_callers',       (a) => this.handleCallers(a)],
+      ['cgraph_callees',       (a) => this.handleCallees(a)],
+      ['cgraph_impact',        (a) => this.handleImpact(a)],
+      ['cgraph_retrieve_ccr',  (a) => this.handleRetrieveCCR(a)],
+      ['cgraph_files',         (a) => this.handleFiles(a)],
+      ['cgraph_status',        (a) => this.handleStatus(a)],
+      ['cgraph_affected',      (a) => this.handleAffected(a)],
+      ['cgraph_export',        (a) => this.handleExport(a)],
+      ['cgraph_changed',       (a) => this.handleChanged(a)],
+      ['cgraph_deadcode',      (a) => this.handleDeadCode(a)],
+      ['cgraph_cycles',        (a) => this.handleCycles(a)],
+      ['cgraph_stats',         (a) => this.handleStats(a)],
+      ['cgraph_suggest',       (a) => this.handleSuggest(a)],
+      ['cgraph_auto_context',  (a) => this.handleAutoContext(a)],
+      ['cgraph_intent_search', (a) => this.handleIntentSearch(a)],
+      ['cgraph_validate_plan', (a) => this.handleValidatePlan(a)],
+      ['cgraph_lint',          (a) => this.handleLint(a)],
+      ['cgraph_dna',           (a) => this.handleDna(a)],
+    ]);
+  }
 
   private async getDb(): Promise<GraphDB> {
     if (!this.db) {
@@ -408,35 +435,11 @@ class ToolHandler {
       if (cached) return cached;
     }
 
+    const handler = this.dispatch.get(toolName);
+    if (!handler) return this.errorResult(`Unknown tool: ${toolName}`);
+
     try {
-      let result: McpToolResult;
-      switch (toolName) {
-        case 'cgraph_search': result = await this.handleSearch(args); break;
-        case 'cgraph_context': result = await this.handleContext(args); break;
-        case 'cgraph_trace': result = await this.handleTrace(args); break;
-        case 'cgraph_explore': result = await this.handleExplore(args); break;
-        case 'cgraph_node': result = await this.handleNode(args); break;
-        case 'cgraph_callers': result = await this.handleCallers(args); break;
-        case 'cgraph_callees': result = await this.handleCallees(args); break;
-        case 'cgraph_impact': result = await this.handleImpact(args); break;
-        case 'cgraph_retrieve_ccr': result = await this.handleRetrieveCCR(args); break;
-        case 'cgraph_files': result = await this.handleFiles(args); break;
-        case 'cgraph_status': result = await this.handleStatus(args); break;
-        case 'cgraph_affected': result = await this.handleAffected(args); break;
-        case 'cgraph_export': result = await this.handleExport(args); break;
-        case 'cgraph_changed': result = await this.handleChanged(args); break;
-        case 'cgraph_deadcode': result = await this.handleDeadCode(args); break;
-        case 'cgraph_cycles': result = await this.handleCycles(args); break;
-        case 'cgraph_stats': result = await this.handleStats(args); break;
-        case 'cgraph_suggest': result = await this.handleSuggest(args); break;
-        case 'cgraph_auto_context': result = await this.handleAutoContext(args); break;
-        case 'cgraph_intent_search': result = await this.handleIntentSearch(args); break;
-        case 'cgraph_validate_plan': result = await this.handleValidatePlan(args); break;
-        case 'cgraph_lint': result = await this.handleLint(args); break;
-        case 'cgraph_dna': result = await this.handleDna(args); break;
-        default:
-          return this.errorResult(`Unknown tool: ${toolName}`);
-      }
+      const result = await handler(args);
       if (cacheKey && !result.isError) this.cache.set(cacheKey, result);
       return result;
     } catch (err: any) {
@@ -944,7 +947,7 @@ class ToolHandler {
   private compressedResult(db: GraphDB, args: Record<string, unknown>, rawResult: unknown): McpToolResult {
     const { mode, capacity } = this.getCompressionProfile(args);
     const ccrId = CCR.save(db, rawResult);
-    const crushed = SmartCrusher.crush(rawResult, mode, capacity);
+    const crushed = SmartCrusher.crush(rawResult, mode, capacity, ccrId);
     const payload = this.applyCodeCompression(crushed, mode);
     return this.textResult(JSON.stringify({
       data: payload,

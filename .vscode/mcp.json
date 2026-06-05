@@ -1,9 +1,13 @@
-{
-  "servers": {
-    "cgraph": {
-      "command": "C:\\Program Files\\nodejs\\node.exe",
-      "args": ["${workspaceFolder}/bin/cgraph.js", "serve", "--mcp"],
-      "cwd": "${workspaceFolder}"
-    }
-  }
+﻿{
+    "servers":  {
+                    "cgraph":  {
+                                   "args":  [
+                                                "C:\\Users\\MY GM2.12\\Documents\\agent_graph\\bin\\cgraph.js",
+                                                "serve",
+                                                "--mcp"
+                                            ],
+                                   "command":  "C:\\Program Files\\nodejs\\node.exe",
+                                   "cwd":  "${workspaceFolder}"
+                               }
+                }
 }

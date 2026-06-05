@@ -15,8 +15,7 @@ class UserService:
         self.db = db
 
     def create_user(self, name: str, email: str, role: str = "user") -> Dict[str, Any]:
-        self.db.execute(
-            "INSERT INTO users (name, email, role) VALUES (?, ?, ?)",
+        self.db.query(            "INSERT INTO users (name, email, role) VALUES (?, ?, ?)",
             (name, email, role),
         )
         return self.get_user_by_email(email)
@@ -38,12 +37,12 @@ class UserService:
     def update_user(self, user_id: int, **kwargs) -> Dict[str, Any]:
         fields = ", ".join(f"{k} = ?" for k in kwargs)
         values = tuple(kwargs.values()) + (user_id,)
-        self.db.execute(f"UPDATE users SET {fields} WHERE id = ?", values)
+        self.db.query(f"UPDATE users SET {fields} WHERE id = ?", values)
         return self.get_user(user_id)
 
     def delete_user(self, user_id: int) -> bool:
         self.get_user(user_id)  # raises if not found
-        self.db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        self.db.query("DELETE FROM users WHERE id = ?", (user_id,))
         return True
 
     def count_users(self) -> int:

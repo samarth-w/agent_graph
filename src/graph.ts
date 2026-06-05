@@ -25,6 +25,41 @@ export function traverse(
   const resultEdges: EdgeRecord[] = [];
   let truncated = false;
 
+  // Pre-load adjacency maps once — avoids N SQL queries per BFS step.
+  // One bulk query per requested edge kind beats per-node getEdgesFrom/To calls.
+  const kinds = opts.edgeKinds ?? [];
+  const needForward  = opts.direction === 'forward'  || opts.direction === 'both';
+  const needBackward = opts.direction === 'backward' || opts.direction === 'both';
+
+  // Build maps: if specific kinds requested load per-kind, else load all at once.
+  const outMaps: Map<number, EdgeRecord[]>[] = [];
+  const inMaps:  Map<number, EdgeRecord[]>[] = [];
+  if (kinds.length > 0) {
+    for (const k of kinds) {
+      const { outgoing, incoming } = db.getAdjacencyMaps(k);
+      if (needForward)  outMaps.push(outgoing);
+      if (needBackward) inMaps.push(incoming);
+    }
+  } else {
+    const { outgoing, incoming } = db.getAdjacencyMaps();
+    if (needForward)  outMaps.push(outgoing);
+    if (needBackward) inMaps.push(incoming);
+  }
+
+  function edgesFrom(id: number): EdgeRecord[] {
+    const out: EdgeRecord[] = [];
+    for (const m of outMaps) { const e = m.get(id); if (e) out.push(...e); }
+    return out;
+  }
+  function edgesTo(id: number): EdgeRecord[] {
+    const inc: EdgeRecord[] = [];
+    for (const m of inMaps) { const e = m.get(id); if (e) inc.push(...e); }
+    return inc;
+  }
+
+  const nodeMap  = db.getNodeMap();
+  const fileMap  = db.getFileMap();
+
   while (queue.length > 0) {
     const { id, depth } = queue.shift()!;
 
@@ -37,35 +72,15 @@ export function traverse(
 
     visited.add(id);
 
-    const node = db.getNode(id);
+    const node = nodeMap.get(id) ?? db.getNode(id);
     if (!node) continue;
-    const file = db.getFileById(node.file_id);
-    resultNodes.push({
-      ...node,
-      file_path: file?.path ?? '',
-      depth,
-    });
+    const filePath = fileMap.get(node.file_id)?.path ?? '';
+    resultNodes.push({ ...node, file_path: filePath, depth });
 
-    // Collect neighbors
+    // Collect neighbors from pre-loaded maps
     const neighbors: { nodeId: number; edge: EdgeRecord }[] = [];
-
-    if (opts.direction === 'forward' || opts.direction === 'both') {
-      const edges = opts.edgeKinds
-        ? opts.edgeKinds.flatMap(k => db.getEdgesFrom(id, k))
-        : db.getEdgesFrom(id);
-      for (const e of edges) {
-        neighbors.push({ nodeId: e.target_id, edge: e });
-      }
-    }
-
-    if (opts.direction === 'backward' || opts.direction === 'both') {
-      const edges = opts.edgeKinds
-        ? opts.edgeKinds.flatMap(k => db.getEdgesTo(id, k))
-        : db.getEdgesTo(id);
-      for (const e of edges) {
-        neighbors.push({ nodeId: e.source_id, edge: e });
-      }
-    }
+    if (needForward)  for (const e of edgesFrom(id)) neighbors.push({ nodeId: e.target_id, edge: e });
+    if (needBackward) for (const e of edgesTo(id))   neighbors.push({ nodeId: e.source_id, edge: e });
 
     for (const { nodeId, edge } of neighbors) {
       if (!visited.has(nodeId)) {
@@ -87,10 +102,14 @@ export function findCallers(
   const nodes = db.findNodesByName(symbolName);
   if (nodes.length === 0) return { nodes: [], edges: [], truncated: false };
 
-  // Prefer the node with the most incoming call edges (the real definition)
+  // Prefer exported definitions; break ties by total call-edge count
+  const { outgoing, incoming } = db.getAdjacencyMaps('calls');
   const target = nodes.reduce((best, n) => {
-    const c = db.getEdgesTo(n.id, 'calls').length + db.getEdgesFrom(n.id, 'calls').length;
-    const b = db.getEdgesTo(best.id, 'calls').length + db.getEdgesFrom(best.id, 'calls').length;
+    const nExp = n.exported ?? 0;
+    const bExp = best.exported ?? 0;
+    if (nExp !== bExp) return nExp > bExp ? n : best;
+    const c = (outgoing.get(n.id)?.length ?? 0) + (incoming.get(n.id)?.length ?? 0);
+    const b = (outgoing.get(best.id)?.length ?? 0) + (incoming.get(best.id)?.length ?? 0);
     return c > b ? n : best;
   });
   return traverse(db, target.id, {
@@ -110,9 +129,14 @@ export function findCallees(
   const nodes = db.findNodesByName(symbolName);
   if (nodes.length === 0) return { nodes: [], edges: [], truncated: false };
 
+  // Prefer exported definitions; break ties by total call-edge count
+  const { outgoing, incoming } = db.getAdjacencyMaps('calls');
   const target = nodes.reduce((best, n) => {
-    const c = db.getEdgesTo(n.id, 'calls').length + db.getEdgesFrom(n.id, 'calls').length;
-    const b = db.getEdgesTo(best.id, 'calls').length + db.getEdgesFrom(best.id, 'calls').length;
+    const nExp = n.exported ?? 0;
+    const bExp = best.exported ?? 0;
+    if (nExp !== bExp) return nExp > bExp ? n : best;
+    const c = (outgoing.get(n.id)?.length ?? 0) + (incoming.get(n.id)?.length ?? 0);
+    const b = (outgoing.get(best.id)?.length ?? 0) + (incoming.get(best.id)?.length ?? 0);
     return c > b ? n : best;
   });
   return traverse(db, target.id, {

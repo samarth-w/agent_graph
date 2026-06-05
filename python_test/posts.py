@@ -15,8 +15,7 @@ class PostService:
     def create_post(self, title: str, body: str, author_id: int) -> Dict[str, Any]:
         # Verify author exists
         self.user_service.get_user(author_id)
-        self.db.execute(
-            "INSERT INTO posts (title, body, author_id) VALUES (?, ?, ?)",
+        self.db.query(            "INSERT INTO posts (title, body, author_id) VALUES (?, ?, ?)",
             (title, body, author_id),
         )
         return self.get_latest_post(author_id)
@@ -46,7 +45,7 @@ class PostService:
         """)
 
     def delete_post(self, post_id: int) -> bool:
-        self.db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
+        self.db.query("DELETE FROM posts WHERE id = ?", (post_id,))
         return True
 
     def delete_posts_by_author(self, author_id: int) -> int:

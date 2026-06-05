@@ -61,10 +61,11 @@ function getFanOutAdjustment(
   const nodes = db.findNodesByName(symbolName);
   if (nodes.length === 0) return { depthDelta: 0, nodesDelta: 0 };
 
-  // Sum edges across all matching nodes
+  // Bulk-load call adjacency maps once — avoids 2N per-node SQL queries
+  const { outgoing, incoming } = db.getAdjacencyMaps('calls');
   let totalEdges = 0;
   for (const n of nodes) {
-    totalEdges += db.getEdgesFrom(n.id).length + db.getEdgesTo(n.id).length;
+    totalEdges += (outgoing.get(n.id)?.length ?? 0) + (incoming.get(n.id)?.length ?? 0);
   }
   const avgEdges = totalEdges / nodes.length;
 

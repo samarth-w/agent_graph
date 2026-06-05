@@ -1,0 +1,4 @@
+﻿{
+    "github.copilot.chat.claudeAgent.allowAutoPermissions":  true,
+    "github.copilot.chat.agent.autoFix":  true
+}
