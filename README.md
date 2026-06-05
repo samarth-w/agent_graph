@@ -6,6 +6,8 @@
 
 **cgraph gives AI agents immediate structural context (callers, callees, impact, traces) so teams ship faster, cut investigation time, and reduce context-window waste.**
 
+> **Novelty:** cgraph is a graph-native agent runtime that combines automatic tool routing with compression-aware context delivery, turning AI coding from multi-step file hunting into measurable, low-latency decision support.
+
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-8B5CF6?style=for-the-badge)](https://modelcontextprotocol.io)
