@@ -346,6 +346,120 @@ public:
   });
 });
 
+describe('ASL Extraction', () => {
+  it('extracts method, device, scope, and name symbols', () => {
+    const code = `DefinitionBlock ("", "DSDT", 2, "OEM", "TABLE", 0x00000000)
+{
+  Scope (\\_SB)
+  {
+    Device (PCI0)
+    {
+      Name (_HID, EisaId ("PNP0A08"))
+      Method (TEST, 1, NotSerialized)
+      {
+        Store (Arg0, Local0)
+        FOO (Local0)
+      }
+    }
+  }
+}`;
+
+    const result = parseFile(code, 'asl', 'dsdt.asl');
+    expect(result.symbols.some((s) => s.name === 'TEST' && s.kind === 'method')).toBe(true);
+    expect(result.symbols.some((s) => s.name === 'PCI0' && s.kind === 'struct')).toBe(true);
+    expect(result.symbols.some((s) => s.name === '_SB' && s.kind === 'namespace')).toBe(true);
+    expect(result.symbols.some((s) => s.name === '_HID' && s.kind === 'constant')).toBe(true);
+  });
+
+  it('extracts calls inside methods', () => {
+    const code = `Method (MTHD, 0, NotSerialized)
+{
+  ABCD (One)
+  Return (Zero)
+}`;
+    const result = parseFile(code, 'asl', 'test.asl');
+    expect(result.calls.some((c) => c.callee === 'ABCD')).toBe(true);
+  });
+});
+
+describe('Firmware Text Extraction (INF/DSC/DEC/FDF/VFR/HFR/UNI)', () => {
+  it('extracts sections, assignments, includes and calls from INF-like files', () => {
+    const code = `[Defines]
+  BASE_NAME = TestPkg
+!include Common.inc
+
+[LibraryClasses]
+  DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf
+  FOO (BAR)`;
+    const result = parseFile(code, 'inf', 'Pkg/Test.inf');
+
+    expect(result.symbols.some((s) => s.name === 'Defines' && s.kind === 'module')).toBe(true);
+    expect(result.symbols.some((s) => s.name === 'BASE_NAME' && s.kind === 'constant')).toBe(true);
+    expect(result.imports.some((i) => i.source === 'Common.inc')).toBe(true);
+    expect(result.calls.some((c) => c.callee === 'FOO')).toBe(true);
+  });
+
+  it('extracts UNI string identifiers', () => {
+    const code = `#string STR_MODULE_NAME #language en-US "My Module"`;
+    const result = parseFile(code, 'uni', 'Pkg/Strings.uni');
+    expect(result.symbols.some((s) => s.name === 'STR_MODULE_NAME')).toBe(true);
+  });
+});
+
+describe('Batch Extraction', () => {
+  it('extracts labels and call targets', () => {
+    const code = `@echo off
+call :build
+goto :eof
+
+:build
+call tool.exe
+exit /b 0`;
+    const result = parseFile(code, 'batch', 'build.bat');
+    expect(result.symbols.some((s) => s.name === 'build' && s.kind === 'function')).toBe(true);
+    expect(result.calls.some((c) => c.callee === 'build')).toBe(true);
+    expect(result.calls.some((c) => c.callee === 'tool.exe')).toBe(true);
+  });
+});
+
+describe('NASM Extraction', () => {
+  it('extracts labels, includes, and call instructions', () => {
+    const code = `%include "macros.inc"
+start:
+  call init
+init:
+  ret`;
+    const result = parseFile(code, 'nasm', 'boot.nasm');
+    expect(result.symbols.some((s) => s.name === 'start')).toBe(true);
+    expect(result.symbols.some((s) => s.name === 'init')).toBe(true);
+    expect(result.imports.some((i) => i.source === 'macros.inc')).toBe(true);
+    expect(result.calls.some((c) => c.callee === 'init')).toBe(true);
+  });
+});
+
+describe('YAML Extraction', () => {
+  it('extracts keys and include-like references', () => {
+    const code = `pipeline:
+  stages:
+    - build
+include: common.yml`;
+    const result = parseFile(code, 'yaml', 'ci.yaml');
+    expect(result.symbols.some((s) => s.name === 'pipeline' && s.kind === 'property')).toBe(true);
+    expect(result.symbols.some((s) => s.name === 'stages' && s.kind === 'property')).toBe(true);
+    expect(result.imports.some((i) => i.source === 'common.yml')).toBe(true);
+  });
+});
+
+describe('Markdown Extraction', () => {
+  it('extracts headings and links', () => {
+    const code = `# Overview\n\nSee [Design](docs/design.md).\n\n## Details`;
+    const result = parseFile(code, 'markdown', 'README.md');
+    expect(result.symbols.some((s) => s.name === 'Overview')).toBe(true);
+    expect(result.symbols.some((s) => s.name === 'Details')).toBe(true);
+    expect(result.imports.some((i) => i.source === 'docs/design.md')).toBe(true);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────
 //  Shell / Bash Extraction
 // ─────────────────────────────────────────────────────────────────

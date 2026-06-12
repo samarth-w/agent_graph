@@ -2,11 +2,11 @@
     "servers":  {
                     "cgraph":  {
                                    "args":  [
-                                                "C:\\Users\\MY GM2.12\\Documents\\agent_graph\\bin\\cgraph.js",
+                                                "C:\\Users\\samarth2\\agent_graph\\bin\\cgraph.js",
                                                 "serve",
                                                 "--mcp"
                                             ],
-                                   "command":  "C:\\Program Files\\nodejs\\node.exe",
+                                   "command":  "C:\\Users\\samarth2\\.cgraph-install\\node\\node.exe",
                                    "cwd":  "${workspaceFolder}"
                                }
                 }

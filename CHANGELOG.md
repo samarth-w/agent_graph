@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### New Languages
+- **ASL (ACPI Source Language)** parser — detects `.asl` files and extracts common symbols (`Method`, `Device`, `Scope`, `Name`, `OperationRegion`) and calls
+- **EDK2 / firmware text formats** — detects and parses `.inf`, `.dsc`, `.dec`, `.fdf`, `.vfr`, `.hfr`, `.uni` with section, assignment, include, and call extraction
+- **Batch parser** — detects `.bat` labels and `call` targets
+- **NASM parser** — detects `.nasm` labels, `%include`, and `call` targets
+- **YAML parser** — detects `.yaml` / `.yml` keys and include-like references
+- **Markdown parser** — detects `.md` headings and links
+
 ## [0.3.0] — 2026-05-25
 
 ### New Features

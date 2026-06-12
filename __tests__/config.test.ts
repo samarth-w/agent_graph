@@ -51,6 +51,25 @@ describe('config', () => {
       expect(detectLanguage('app.py')).toBe('python');
     });
 
+    it('detects ASL', () => {
+      expect(detectLanguage('dsdt.asl')).toBe('asl');
+    });
+
+    it('detects firmware and text extensions', () => {
+      expect(detectLanguage('platform.inf')).toBe('inf');
+      expect(detectLanguage('platform.dsc')).toBe('dsc');
+      expect(detectLanguage('package.dec')).toBe('dec');
+      expect(detectLanguage('flash.fdf')).toBe('fdf');
+      expect(detectLanguage('forms.vfr')).toBe('vfr');
+      expect(detectLanguage('forms.hfr')).toBe('hfr');
+      expect(detectLanguage('strings.uni')).toBe('uni');
+      expect(detectLanguage('build.bat')).toBe('batch');
+      expect(detectLanguage('startup.nasm')).toBe('nasm');
+      expect(detectLanguage('pipeline.yaml')).toBe('yaml');
+      expect(detectLanguage('pipeline.yml')).toBe('yaml');
+      expect(detectLanguage('README.md')).toBe('markdown');
+    });
+
     it('returns null for unknown extension', () => {
       expect(detectLanguage('README.xyz')).toBeNull();
     });

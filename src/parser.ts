@@ -22,6 +22,14 @@ export function parseFile(
 ): ParseResult {
   if (isJSTS(language)) return parseJSTS(content, language, relPath);
   if (language === 'python')     return parsePython(content, relPath);
+  if (language === 'inf' || language === 'dsc' || language === 'dec' ||
+      language === 'fdf' || language === 'vfr' || language === 'hfr' ||
+      language === 'uni')        return parseFirmwareText(content, relPath, language);
+  if (language === 'asl')        return parseASL(content, relPath);
+  if (language === 'batch')      return parseBatch(content, relPath);
+  if (language === 'nasm')       return parseNasm(content, relPath);
+  if (language === 'yaml')       return parseYaml(content, relPath);
+  if (language === 'markdown')   return parseMarkdown(content, relPath);
   if (language === 'c' || language === 'cpp') return parseCCpp(content, language, relPath);
   if (language === 'shell')      return parseShell(content, relPath);
   if (language === 'powershell') return parsePowerShell(content, relPath);
@@ -504,6 +512,518 @@ function extractPyDoc(lines: string[], defLineIdx: number): string | null {
     }
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  ASL (ACPI Source Language) — regex-based extractor
+// ─────────────────────────────────────────────────────────────────
+function parseASL(content: string, relPath: string): ParseResult {
+  const lines = content.split('\n');
+  const symbols: ParsedSymbol[] = [];
+  const calls: ParsedCall[] = [];
+  const imports: ParsedImport[] = [];
+
+  const scopeStack: { name: string; endLine: number }[] = [];
+  const aslKeywords = new Set([
+    'Method', 'Device', 'Scope', 'Name', 'DefinitionBlock', 'OperationRegion',
+    'Field', 'If', 'Else', 'Return', 'While', 'Switch', 'Package', 'Buffer',
+  ]);
+
+  const reMethod = /^\s*Method\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,?([^)]*)\)/;
+  const reDevice = /^\s*Device\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/;
+  const reScope = /^\s*Scope\s*\(\s*([^\)]+)\s*\)/;
+  const reName = /^\s*Name\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,/;
+  const reOpRegion = /^\s*OperationRegion\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,/;
+  const reCall = /\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+  function currentScope(): string | null {
+    if (scopeStack.length === 0) return null;
+    return `${relPath}::${scopeStack.map((s) => s.name).join('.')}`;
+  }
+
+  function qname(name: string): string {
+    const prefix = scopeStack.map((s) => s.name).join('.');
+    return prefix ? `${relPath}::${prefix}.${name}` : `${relPath}::${name}`;
+  }
+
+  function findBraceEnd(startIdx: number): number {
+    let depth = 0;
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i];
+      for (const ch of line) {
+        if (ch === '{') depth++;
+        if (ch === '}') {
+          depth--;
+          if (depth === 0) return i + 1;
+        }
+      }
+    }
+    return startIdx + 1;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('//')) continue;
+
+    while (scopeStack.length > 0 && lineNo > scopeStack[scopeStack.length - 1].endLine) {
+      scopeStack.pop();
+    }
+
+    const mm = line.match(reMethod);
+    if (mm) {
+      const name = mm[1];
+      const hasBrace = trimmed.includes('{');
+      const endLine = hasBrace ? findBraceEnd(i) : lineNo;
+      symbols.push({
+        name,
+        qualifiedName: qname(name),
+        kind: 'method',
+        startLine: lineNo,
+        endLine,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      if (hasBrace) scopeStack.push({ name, endLine });
+      continue;
+    }
+
+    const dm = line.match(reDevice);
+    if (dm) {
+      const name = dm[1];
+      const hasBrace = trimmed.includes('{');
+      const endLine = hasBrace ? findBraceEnd(i) : lineNo;
+      symbols.push({
+        name,
+        qualifiedName: qname(name),
+        kind: 'struct',
+        startLine: lineNo,
+        endLine,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      if (hasBrace) scopeStack.push({ name, endLine });
+      continue;
+    }
+
+    const sm = line.match(reScope);
+    if (sm) {
+      const raw = sm[1].trim();
+      const name = raw.replace(/[^A-Za-z0-9_]/g, '') || 'Scope';
+      const hasBrace = trimmed.includes('{');
+      const endLine = hasBrace ? findBraceEnd(i) : lineNo;
+      symbols.push({
+        name,
+        qualifiedName: qname(name),
+        kind: 'namespace',
+        startLine: lineNo,
+        endLine,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      if (hasBrace) scopeStack.push({ name, endLine });
+      continue;
+    }
+
+    const nm = line.match(reName);
+    if (nm) {
+      const name = nm[1];
+      symbols.push({
+        name,
+        qualifiedName: qname(name),
+        kind: 'constant',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      continue;
+    }
+
+    const om = line.match(reOpRegion);
+    if (om) {
+      const name = om[1];
+      symbols.push({
+        name,
+        qualifiedName: qname(name),
+        kind: 'variable',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      continue;
+    }
+
+    reCall.lastIndex = 0;
+    let cm;
+    while ((cm = reCall.exec(trimmed)) !== null) {
+      const callee = cm[1];
+      if (aslKeywords.has(callee)) continue;
+      calls.push({ callee, line: lineNo, enclosingSymbol: currentScope() });
+    }
+  }
+
+  return { symbols, calls, imports };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Firmware text formats (INF/DSC/DEC/FDF/VFR/HFR/UNI) — regex-based
+// ─────────────────────────────────────────────────────────────────
+function parseFirmwareText(content: string, relPath: string, language: string): ParseResult {
+  const lines = content.split('\n');
+  const symbols: ParsedSymbol[] = [];
+  const calls: ParsedCall[] = [];
+  const imports: ParsedImport[] = [];
+
+  const reSection = /^\s*\[\s*([^\]]+)\s*\]/;
+  const reInclude = /^\s*(?:!include|#include|include)\s+(.+)$/i;
+  const reAssign = /^\s*([A-Za-z_][A-Za-z0-9_\.\-]*)\s*=\s*(.+)$/;
+  const reUniString = /^\s*#string\s+([A-Za-z_][A-Za-z0-9_]*)\b/i;
+  const reCall = /\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+
+  const controlWords = new Set([
+    'if', 'endif', 'else', 'elseif', 'define', 'include', 'error', 'warning',
+    'option', 'component', 'libraryclass', 'pcd', 'token',
+  ]);
+
+  let currentSection: string | null = null;
+
+  function sectionQName(name: string): string {
+    return `${relPath}::${name}`;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';') || trimmed.startsWith('//')) continue;
+
+    const sm = line.match(reSection);
+    if (sm) {
+      currentSection = sm[1].trim();
+      symbols.push({
+        name: currentSection,
+        qualifiedName: sectionQName(currentSection),
+        kind: 'module',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      continue;
+    }
+
+    const im = line.match(reInclude);
+    if (im) {
+      const source = im[1].trim().replace(/["']/g, '');
+      imports.push({
+        source,
+        specifiers: [{ name: source, alias: null, isDefault: true, isNamespace: true }],
+        line: lineNo,
+        isDynamic: false,
+      });
+      continue;
+    }
+
+    if (language === 'uni') {
+      const um = line.match(reUniString);
+      if (um) {
+        symbols.push({
+          name: um[1],
+          qualifiedName: currentSection ? `${sectionQName(currentSection)}.${um[1]}` : sectionQName(um[1]),
+          kind: 'constant',
+          startLine: lineNo,
+          endLine: lineNo,
+          signature: trimmed,
+          doc: null,
+          exported: true,
+          children: [],
+        });
+        continue;
+      }
+    }
+
+    const am = line.match(reAssign);
+    if (am) {
+      const name = am[1];
+      symbols.push({
+        name,
+        qualifiedName: currentSection ? `${sectionQName(currentSection)}.${name}` : sectionQName(name),
+        kind: 'constant',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+    }
+
+    reCall.lastIndex = 0;
+    let cm;
+    while ((cm = reCall.exec(trimmed)) !== null) {
+      const callee = cm[1];
+      if (controlWords.has(callee.toLowerCase())) continue;
+      calls.push({
+        callee,
+        line: lineNo,
+        enclosingSymbol: currentSection ? sectionQName(currentSection) : null,
+      });
+    }
+  }
+
+  return { symbols, calls, imports };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Batch (.bat) — regex-based extractor
+// ─────────────────────────────────────────────────────────────────
+function parseBatch(content: string, relPath: string): ParseResult {
+  const lines = content.split('\n');
+  const symbols: ParsedSymbol[] = [];
+  const calls: ParsedCall[] = [];
+  const imports: ParsedImport[] = [];
+
+  const reLabel = /^\s*:([A-Za-z_][A-Za-z0-9_-]*)\s*$/;
+  const reCallLabel = /^\s*call\s+:([A-Za-z_][A-Za-z0-9_-]*)\b/i;
+  const reCallCmd = /^\s*call\s+([A-Za-z_][A-Za-z0-9_.-]*)\b/i;
+  const reFirstWord = /^\s*([A-Za-z_][A-Za-z0-9_.-]*)\b/;
+  const keywords = new Set(['echo', 'set', 'if', 'for', 'goto', 'call', 'exit', 'rem', 'shift']);
+
+  let current: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const trimmed = line.trim();
+    if (!trimmed || /^\s*rem\b/i.test(trimmed) || trimmed.startsWith('::')) continue;
+
+    const lm = line.match(reLabel);
+    if (lm) {
+      const name = lm[1];
+      symbols.push({
+        name,
+        qualifiedName: `${relPath}::${name}`,
+        kind: 'function',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: trimmed,
+        doc: null,
+        exported: true,
+        children: [],
+      });
+      current = `${relPath}::${name}`;
+      continue;
+    }
+
+    const cl = line.match(reCallLabel);
+    if (cl) {
+      calls.push({ callee: cl[1], line: lineNo, enclosingSymbol: current });
+      continue;
+    }
+
+    const cc = line.match(reCallCmd);
+    if (cc) {
+      calls.push({ callee: cc[1], line: lineNo, enclosingSymbol: current });
+      continue;
+    }
+
+    const fm = line.match(reFirstWord);
+    if (fm) {
+      const cmd = fm[1].toLowerCase();
+      if (!keywords.has(cmd)) {
+        calls.push({ callee: fm[1], line: lineNo, enclosingSymbol: current });
+      }
+    }
+  }
+
+  return { symbols, calls, imports };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  NASM — regex-based extractor
+// ─────────────────────────────────────────────────────────────────
+function parseNasm(content: string, relPath: string): ParseResult {
+  const lines = content.split('\n');
+  const symbols: ParsedSymbol[] = [];
+  const calls: ParsedCall[] = [];
+  const imports: ParsedImport[] = [];
+
+  const reInclude = /^\s*%include\s+["']([^"']+)["']/i;
+  const reLabel = /^\s*([A-Za-z_.$?@][A-Za-z0-9_.$?@]*)\s*:\s*$/;
+  const reCall = /^\s*call\s+([A-Za-z_.$?@][A-Za-z0-9_.$?@]*)\b/i;
+
+  let current: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(';')) continue;
+
+    const im = line.match(reInclude);
+    if (im) {
+      imports.push({
+        source: im[1],
+        specifiers: [{ name: im[1], alias: null, isDefault: true, isNamespace: true }],
+        line: lineNo,
+        isDynamic: false,
+      });
+      continue;
+    }
+
+    const lm = line.match(reLabel);
+    if (lm) {
+      const name = lm[1];
+      symbols.push({
+        name,
+        qualifiedName: `${relPath}::${name}`,
+        kind: 'function',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: trimmed,
+        doc: null,
+        exported: !name.startsWith('.'),
+        children: [],
+      });
+      current = `${relPath}::${name}`;
+      continue;
+    }
+
+    const cm = line.match(reCall);
+    if (cm) {
+      calls.push({ callee: cm[1], line: lineNo, enclosingSymbol: current });
+    }
+  }
+
+  return { symbols, calls, imports };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  YAML — lightweight structure extractor
+// ─────────────────────────────────────────────────────────────────
+function parseYaml(content: string, relPath: string): ParseResult {
+  const lines = content.split('\n');
+  const symbols: ParsedSymbol[] = [];
+  const calls: ParsedCall[] = [];
+  const imports: ParsedImport[] = [];
+
+  const reKey = /^(\s*)([A-Za-z0-9_.-]+)\s*:\s*(.*)$/;
+  const reInclude = /^(\s*)(?:-\s+)?(?:include|imports?|extends|uses)\s*:\s*(.+)$/i;
+
+  const stack: { name: string; indent: number }[] = [];
+
+  function qname(name: string): string {
+    const prefix = stack.map((s) => s.name).join('.');
+    return prefix ? `${relPath}::${prefix}.${name}` : `${relPath}::${name}`;
+  }
+
+  function pop(indent: number): void {
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop();
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const km = line.match(reKey);
+    if (!km) continue;
+    const indent = km[1].replace(/\t/g, '  ').length;
+    const key = km[2];
+    const value = km[3];
+
+    pop(indent);
+    symbols.push({
+      name: key,
+      qualifiedName: qname(key),
+      kind: 'property',
+      startLine: lineNo,
+      endLine: lineNo,
+      signature: trimmed,
+      doc: null,
+      exported: true,
+      children: [],
+    });
+
+    if (value === '' || value === '|' || value === '>') {
+      stack.push({ name: key, indent });
+    }
+
+    const im = line.match(reInclude);
+    if (im) {
+      const source = im[2].trim().replace(/^['"]|['"]$/g, '');
+      imports.push({
+        source,
+        specifiers: [{ name: source, alias: null, isDefault: true, isNamespace: true }],
+        line: lineNo,
+        isDynamic: false,
+      });
+    }
+  }
+
+  return { symbols, calls, imports };
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Markdown — heading extractor
+// ─────────────────────────────────────────────────────────────────
+function parseMarkdown(content: string, relPath: string): ParseResult {
+  const lines = content.split('\n');
+  const symbols: ParsedSymbol[] = [];
+  const calls: ParsedCall[] = [];
+  const imports: ParsedImport[] = [];
+
+  const reHeading = /^(#{1,6})\s+(.+)$/;
+  const reLink = /\[[^\]]+\]\(([^)]+)\)/g;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineNo = i + 1;
+    const hm = line.match(reHeading);
+    if (hm) {
+      const level = hm[1].length;
+      const title = hm[2].trim();
+      symbols.push({
+        name: title,
+        qualifiedName: `${relPath}::H${level}.${title}`,
+        kind: 'module',
+        startLine: lineNo,
+        endLine: lineNo,
+        signature: line.trim(),
+        doc: null,
+        exported: true,
+        children: [],
+      });
+    }
+
+    reLink.lastIndex = 0;
+    let lm;
+    while ((lm = reLink.exec(line)) !== null) {
+      const source = lm[1];
+      imports.push({
+        source,
+        specifiers: [{ name: source, alias: null, isDefault: true, isNamespace: true }],
+        line: lineNo,
+        isDynamic: false,
+      });
+    }
+  }
+
+  return { symbols, calls, imports };
 }
 
 // ─────────────────────────────────────────────────────────────────
