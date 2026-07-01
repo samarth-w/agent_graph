@@ -10,7 +10,8 @@ import path from 'path';
 import fs from 'fs';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
-import { findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings, getAutoContext, validatePlan, getCodebaseDNA } from './graph';
+import { findCallers, findCallees, analyzeImpact, evaluateImpactCases, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings, getAutoContext, validatePlan, getCodebaseDNA } from './graph';
+import type { ImpactEvaluationCase } from './types';
 import { searchSymbols, intentSearch } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DEFAULT_CONFIG, loadConfig } from './config';
@@ -42,6 +43,125 @@ function out(data: unknown, pretty?: boolean): void {
 
 function resolveRoot(dir?: string): string {
   return path.resolve(dir ?? process.cwd());
+}
+
+export interface CapabilitySmokeCheck {
+  name: string;
+  status: 'ok' | 'failed';
+  detail: string;
+}
+
+export interface CapabilitySmokeReport {
+  root_dir: string;
+  target_symbol: string;
+  ok: boolean;
+  passed: number;
+  failed: number;
+  checks: CapabilitySmokeCheck[];
+}
+
+export function loadImpactEvaluationCasesFromFile(filePath: string): ImpactEvaluationCase[] {
+  const resolvedPath = path.resolve(filePath);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Impact evaluation cases file not found: ${resolvedPath}`);
+  }
+
+  const raw = fs.readFileSync(resolvedPath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error('Impact evaluation cases file must contain a JSON array.');
+  }
+
+  return parsed.map((entry, idx) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`Case at index ${idx} must be an object.`);
+    }
+    const item = entry as Record<string, unknown>;
+    const name = typeof item.name === 'string' ? item.name : `case-${idx + 1}`;
+    const target = typeof item.target === 'string' ? item.target : '';
+    const expectedSymbols = Array.isArray(item.expected_symbols)
+      ? item.expected_symbols.filter((v): v is string => typeof v === 'string')
+      : [];
+    const mode = item.mode === 'decision' ? 'decision' : 'discovery';
+    if (!target) {
+      throw new Error(`Case at index ${idx} is missing a non-empty target.`);
+    }
+    return { name, target, expected_symbols: expectedSymbols, mode };
+  });
+}
+
+export function evaluateImpactCasesFromFile(
+  db: GraphDB,
+  rootDir: string,
+  filePath: string,
+  opts: { maxDepth?: number; maxNodes?: number } = {},
+) {
+  const cases = loadImpactEvaluationCasesFromFile(filePath);
+  return evaluateImpactCases(db, rootDir, cases, opts);
+}
+
+export async function runCapabilitySmokeCheck(
+  db: GraphDB,
+  rootDir: string,
+  opts: { targetSymbol?: string; maxDepth?: number; maxNodes?: number } = {},
+): Promise<CapabilitySmokeReport> {
+  const targetSymbol = opts.targetSymbol ?? 'main';
+  const checks: CapabilitySmokeCheck[] = [];
+  const push = (name: string, status: 'ok' | 'failed', detail: string) => {
+    checks.push({ name, status, detail });
+  };
+
+  try {
+    const results = searchSymbols(db, targetSymbol, { limit: 5 });
+    push('search', 'ok', `${results.length} result(s)`);
+  } catch (err: any) {
+    push('search', 'failed', err.message);
+  }
+
+  try {
+    const payload = buildContext(db, rootDir, targetSymbol);
+    push('context', 'ok', `${payload.nodes.length} node(s), ${payload.snippets.length} snippet(s)`);
+  } catch (err: any) {
+    push('context', 'failed', err.message);
+  }
+
+  try {
+    const result = analyzeImpact(db, targetSymbol, {
+      maxDepth: opts.maxDepth ?? 2,
+      maxNodes: opts.maxNodes ?? 10,
+      rootDir,
+      mode: 'discovery',
+    });
+    const impactedCount = Array.isArray((result as any).impacted_nodes)
+      ? (result as any).impacted_nodes.length
+      : 0;
+    push('impact', 'ok', `${impactedCount} impacted node(s)`);
+  } catch (err: any) {
+    push('impact', 'failed', err.message);
+  }
+
+  try {
+    const stats = getProjectStats(db) as any;
+    const indexedNodes = typeof stats?.total_nodes === 'number'
+      ? stats.total_nodes
+      : (typeof stats?.nodes_total === 'number'
+        ? stats.nodes_total
+        : (typeof stats?.nodes === 'number' ? stats.nodes : 0));
+    push('stats', 'ok', `${indexedNodes} indexed node(s)`);
+  } catch (err: any) {
+    push('stats', 'failed', err.message);
+  }
+
+  const passed = checks.filter(check => check.status === 'ok').length;
+  const failed = checks.length - passed;
+  return {
+    root_dir: rootDir,
+    target_symbol: targetSymbol,
+    ok: failed === 0,
+    passed,
+    failed,
+    checks,
+  };
 }
 
 async function openDb(rootDir: string): Promise<GraphDB> {
@@ -260,6 +380,8 @@ program
       const result = analyzeImpact(db, target, {
         maxDepth: adaptive.maxDepth,
         maxNodes: adaptive.maxNodes,
+        rootDir: root,
+        mode: 'discovery',
       });
       out({
         target: result.target,
@@ -270,13 +392,100 @@ program
           file: n.file_path,
           line: n.start_line,
           depth: n.depth,
+          confidence: n.confidence,
+          relation_type: n.relation_type,
+          evidence_excerpt: n.evidence_excerpt,
+          rationale: n.rationale,
         })),
         impacted_files: result.impacted_files,
         total_impacted: result.impacted_nodes.length,
         truncated: result.truncated,
+        scope: result.scope,
+        warnings: result.warnings,
       }, opts.pretty);
     } finally {
       db.close();
+    }
+  });
+
+// ── cgraph benchmark / eval-impact ──────────────────────────
+program
+  .command('benchmark')
+  .alias('eval-impact')
+  .description('Run an optional, on-demand benchmark of impact evaluation cases from a JSON file')
+  .argument('<cases-file>', 'path to a JSON file containing impact cases')
+  .option('--dir <path>', 'project root directory', '.')
+  .option('--depth <n>', 'max traversal depth', '3')
+  .option('--limit <n>', 'max nodes per traversal', '50')
+  .option('--pretty', 'pretty-print JSON output')
+  .option('--save <path>', 'write the benchmark summary to a JSON file')
+  .action(async (casesFile: string, opts: any) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      const summary = evaluateImpactCasesFromFile(db, root, casesFile, {
+        maxDepth: parseInt(opts.depth, 10),
+        maxNodes: parseInt(opts.limit, 10),
+      });
+      const result = {
+        cases_file: path.resolve(casesFile),
+        root_dir: root,
+        total: summary.total,
+        passed: summary.passed,
+        precision: summary.precision,
+        recall: summary.recall,
+        cases: summary.cases.map(c => ({
+          name: c.name,
+          target: c.target,
+          passed: c.passed,
+          matched: c.matched,
+          missing: c.missing,
+          unexpected: c.unexpected,
+          precision: c.precision,
+          recall: c.recall,
+          total_impacted: c.total_impacted,
+        })),
+      };
+
+      if (opts.save) {
+        const savePath = path.resolve(opts.save);
+        fs.mkdirSync(path.dirname(savePath), { recursive: true });
+        fs.writeFileSync(savePath, JSON.stringify(result, null, 2));
+      }
+
+      out(result, opts.pretty);
+    } catch (err: any) {
+      out({ error: err.message }, opts.pretty);
+      process.exit(1);
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph smoke ───────────────────────────────────────────────
+program
+  .command('smoke')
+  .description('Run a lightweight smoke test to confirm core capabilities are working')
+  .argument('[dir]', 'project root directory', '.')
+  .option('--dir <path>', 'project root directory', '.')
+  .option('--target <symbol>', 'symbol to use for search/context/impact checks', 'main')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (dir: string, opts: { dir?: string; target?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir ?? dir);
+    let db: GraphDB | undefined;
+    try {
+      const dbPath = getDbPath(root);
+      if (!fs.existsSync(dbPath)) {
+        await indexProject(root, { force: false });
+      }
+      db = await openDb(root);
+      const report = await runCapabilitySmokeCheck(db, root, { targetSymbol: opts.target });
+      out(report, opts.pretty);
+    } catch (err: any) {
+      out({ error: err.message }, opts.pretty);
+      process.exit(1);
+    } finally {
+      db?.close();
     }
   });
 
@@ -836,4 +1045,10 @@ program.on('command:*', () => {
   process.exit(1);
 });
 
-program.parse();
+const invokedDirectly = Boolean(
+  process.argv[1] && path.basename(path.resolve(process.argv[1])) === 'cgraph.js',
+);
+
+if (require.main === module || invokedDirectly) {
+  program.parse();
+}

@@ -1,353 +1,224 @@
-<div align="center">
+# cgraph
 
-# ⚡ cgraph
+Graph-native code intelligence for AI agents and engineering teams.
 
-### Turn code intelligence into faster delivery and lower engineering cost.
+cgraph turns codebases into a queryable graph so agents can answer structural questions in one step: callers, callees, impact, traces, changed symbols, affected tests, and architecture risk.
 
-**cgraph gives AI agents immediate structural context (callers, callees, impact, traces) so teams ship faster, cut investigation time, and reduce context-window waste.**
+Instead of multi-step grep + file-hopping loops, cgraph provides bounded, high-signal responses optimized for speed and decision quality.
 
-> **Novelty:** cgraph is a graph-native agent runtime that combines automatic tool routing with compression-aware context delivery, turning AI coding from multi-step file hunting into measurable, low-latency decision support.
+## Why teams adopt cgraph
 
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![MCP](https://img.shields.io/badge/MCP-Compatible-8B5CF6?style=for-the-badge)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/Tests-427%20passing-22C55E?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev)
-[![License](https://img.shields.io/badge/License-AGPL--3.0-EF4444?style=for-the-badge)](LICENSE)
+cgraph is built around measurable outcomes:
 
-```
-  ┌─────────┐     MCP      ┌──────────┐    SQLite    ┌──────────┐
-  │ Copilot │◄────────────►│  cgraph  │◄────────────►│ .cgraph/ │
-  │  Agent  │  JSON-RPC    │  Server  │   sql.js     │ graph.db │
-  └─────────┘              └──────────┘              └──────────┘
-       │                        ▲                         ▲
-      │ "who calls             │ 23 tools                │ files, nodes,
-       │  handleRequest?"       │ instant response        │ edges, roles
-       ▼                        │                         │
-  ┌─────────┐              ┌──────────┐              ┌──────────┐
-  │  1 call │  instead of  │  Parser  │───index────►│ Your Code│
-  │  2.2s   │              │ + Walker │              │  .ts .py │
-  └─────────┘              └──────────┘              │  .c  .sh │
-                                                     └──────────┘
-```
+- Faster time-to-answer for architecture and change-risk questions.
+- Lower token/tool overhead by replacing search chains with graph queries.
+- Better confidence via evidence-backed impact output and evaluation summaries.
+- Practical production workflow: smoke checks, benchmark harness, and incremental indexing.
 
-[Getting Started](#-getting-started) · [MCP Tools](#-mcp-tools) · [CLI Reference](#-cli-reference) · [Benchmarks](#-benchmarks) · [Architecture](#-architecture)
+## What cgraph does
 
-</div>
+- Indexes repositories into a local graph database in `.cgraph/graph.db`.
+- Extracts symbols and relationships across multiple languages.
+- Exposes 23 MCP tools for agent workflows.
+- Provides a CLI for direct usage in terminals and CI.
+- Supports impact evaluation suites with precision/recall summaries.
 
----
+## Supported languages
 
-## 🎯 The Problem
+- TypeScript / JavaScript
+- Python
+- C / C++
+- Shell / PowerShell
 
-Without a precomputed graph, AI-assisted workflows spend most of their time on low-value repository traversal.
+## Quick start
 
-That means:
-- Slower code reviews and refactors
-- More token spend for less signal
-- Longer lead time from question to decision
+### Install
 
-Typical pattern:
+Windows:
 
-```
-❌ Without cgraph                          ✅ With cgraph
-─────────────────────────────              ──────────────────────
-1. grep "handleRequest"                    1. cgraph_node handleRequest
-2. read_file server.ts                        → definition, callers,
-3. grep "import.*handleRequest"               callees, file:line
-4. read_file routes.ts                        all in ONE response
-5. grep "routes" to find callers
-6. read_file app.ts
-7. finally has the answer                  Done. 2.2 seconds.
-   14 seconds later...
-```
-
-**cgraph pre-computes the graph once**, then answers structural questions in one call with bounded, high-signal output.
-
----
-
-## ✨ Feature Highlights
-
-<table>
-<tr>
-<td width="50%">
-
-### 🔌 Install & Forget
-One-command installer. Auto-indexes on first Copilot query. No config per project.
-
-### 🛠️ 23 MCP Tools
-search · context · trace · explore · node · callers · callees · impact · retrieve-ccr · files · status · affected · export · changed · deadcode · cycles · stats · suggest · auto-context · intent-search · validate-plan · lint · dna
-
-### ⚡ Dramatically Faster Workflows
-Collapses multi-step grep→read chains into single precomputed graph queries. Avg MCP tool latency: **20ms**.
-
-</td>
-<td width="50%">
-
-### 🌍 Multi-Language
-TypeScript · JavaScript · Python · C · C++ · Shell · PowerShell — all from one index.
-
-### 🧠 Smart Analysis
-Dead code detection · cycle finding · refactoring suggestions · role classification · project statistics.
-
-### 🔄 Incremental & Live
-3-tier change detection. File watcher with auto re-index. Parallel parsing with worker threads.
-
-</td>
-</tr>
-</table>
-
----
-
-## 🚀 Getting Started
-
-### Option A: One-Command Install
-
-> No Node.js or git required — the installer handles everything.
-
-<table>
-<tr>
-<td>
-
-**Windows**
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-</td>
-<td>
+macOS / Linux:
 
-**macOS / Linux**
 ```bash
 bash install.sh
 ```
 
-</td>
-</tr>
-</table>
-
-The installer will:
-1. 📦 Download portable Node.js (if needed)
-2. 📥 Fetch cgraph source
-3. 🔨 Build it
-4. 🔗 Add `cgraph` to your PATH
-5. ⚙️ Configure VS Code MCP globally (works in **all** workspaces)
-
-> **That's it.** Open any project → ask Copilot → cgraph auto-indexes and responds.
-
-### Option B: From Source
+From source:
 
 ```bash
 git clone https://github.com/samarth-w/agent_graph.git
 cd agent_graph
-npm install && npm run build
-npm link                       # optional: makes `cgraph` available globally
+npm install
+npm run build
+npm link
 ```
 
-### Option C: One-Step Agent Enable (Workspace)
+### First run
 
-If you already cloned this repo and want MCP + dropdown agent mode configured automatically:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-agent.ps1 -ProjectPath .
+```bash
+cgraph index .
+cgraph status . --pretty
 ```
 
-This script:
-- installs/builds cgraph,
-- writes `.vscode/mcp.json`,
-- enables workspace Copilot agent settings,
-- validates `.github/agents/cgraph-auto.agent.md` for dropdown use.
+## High-value workflows
 
-<details>
-<summary><strong>📋 VS Code MCP Configuration</strong> (if you installed from source)</summary>
+### 1) Smoke check core capabilities
 
-Add to your VS Code `settings.json` (Ctrl+Shift+P → "Open User Settings (JSON)"):
+Confirms search, context, impact, and stats in one command.
 
-```json
-{
-  "mcp": {
-    "servers": {
-      "cgraph": {
-        "command": "node",
-        "args": ["<path-to-cgraph>/bin/cgraph.js", "serve", "--mcp"],
-        "cwd": "${workspaceFolder}"
-      }
-    }
-  }
-}
+```bash
+cgraph smoke --dir demo/finance --target createUser --pretty
 ```
 
-> **Windows tip:** If VS Code can't find `node`, use `"C:\\Program Files\\nodejs\\node.exe"`.
+### 2) Run impact benchmark on demand
 
-</details>
+Uses a JSON case file and returns case-level plus aggregate metrics.
 
-<details>
-<summary><strong>👥 Teammate Setup</strong></summary>
-
-**With Node.js:** `git clone` → `npm install` → `npm run build` → `npm link` → add MCP config.
-
-**Without Node.js:** Share the repo folder → run `install.ps1` (Win) or `install.sh` (Mac/Linux) → done.
-
-</details>
-
-### 🤖 Copilot Agent Dropdown (cgraph auto)
-
-This repo includes a custom Copilot agent profile at `.github/agents/cgraph-auto.agent.md`.
-
-In Copilot Chat:
-1. Open the agent/mode dropdown.
-2. Select **cgraph auto**.
-3. Ask normal coding questions — the agent auto-routes requests by tier:
-  - Tier 1: fast lookup (`cgraph_search`, `cgraph_node`)
-  - Tier 2: graph traversal (`cgraph_callers`, `cgraph_callees`, `cgraph_impact`, `cgraph_trace`)
-  - Tier 3: edit/write/review (`cgraph_context`, `cgraph_affected`)
-
-If cgraph has no match, it falls back to search + read automatically.
-
----
-
-## 🔧 MCP Tools
-
-When running as an MCP server, **23 tools** are available to AI agents:
-
-```mermaid
-graph LR
-    subgraph "🔍 Discovery"
-        A[cgraph_search] --> B[cgraph_explore]
-        A --> C[cgraph_node]
-    end
-    subgraph "🧭 Navigation"
-        C --> D[cgraph_callers]
-        C --> E[cgraph_callees]
-        D --> F[cgraph_trace]
-    end
-    subgraph "💡 Intelligence"
-        F --> G[cgraph_context]
-        G --> H[cgraph_impact]
-        H --> I[cgraph_affected]
-    end
-    subgraph "📊 Analysis"
-        J[cgraph_deadcode]
-        K[cgraph_cycles]
-        L[cgraph_stats]
-        M[cgraph_suggest]
-    end
-    subgraph "🧠 Agentic Intelligence"
-        R[cgraph_auto_context]
-        S[cgraph_intent_search]
-        T[cgraph_validate_plan]
-        U[cgraph_lint]
-        V[cgraph_dna]
-    end
-    subgraph "📦 Utilities"
-        N[cgraph_status]
-        O[cgraph_files]
-        P[cgraph_export]
-        Q[cgraph_changed]
-    end
-
-    style A fill:#3B82F6,color:#fff
-    style G fill:#8B5CF6,color:#fff
-    style H fill:#EF4444,color:#fff
-    style M fill:#F59E0B,color:#fff
-    style R fill:#10B981,color:#fff
-    style T fill:#EC4899,color:#fff
+```bash
+cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --pretty
 ```
 
-| Tool | What it does | When to use |
-|:-----|:-------------|:------------|
-| `cgraph_context` | Builds ranked code context for a task | **Start here** — best for architecture & feature questions |
-| `cgraph_search` | Find symbols by name with fuzzy matching | Looking for a specific function or class |
-| `cgraph_node` | Symbol detail + full call trail | Deep-dive on one symbol |
-| `cgraph_explore` | Source code for multiple related symbols | Need actual code, not just structure |
-| `cgraph_callers` | Who calls this? (reverse graph) | Understanding usage patterns |
-| `cgraph_callees` | What does this call? (forward graph) | Understanding dependencies |
-| `cgraph_trace` | Call path between two symbols | "How does X reach Y?" |
-| `cgraph_impact` | Blast radius of a change | Pre-change risk assessment |
-| `cgraph_retrieve_ccr` | Retrieve full payload for a compressed CCR response | After truncated/compressed outputs when you need original full data |
-| `cgraph_affected` | Test files impacted by changes | CI optimization, test selection |
-| `cgraph_changed` | Symbols changed in git diff | Code review, change mapping |
-| `cgraph_deadcode` | Unreachable symbols | Cleanup candidates |
-| `cgraph_cycles` | Circular dependency detection | Architecture health |
-| `cgraph_stats` | Project metrics & hotspots | Codebase overview |
-| `cgraph_suggest` | Refactoring suggestions | Extract, inline, move, split recommendations |
-| `cgraph_export` | Mermaid / DOT / HTML diagrams | Visualization & docs |
-| `cgraph_files` | List all indexed files | Inventory check |
-| `cgraph_auto_context` | File-level warm start: symbols, callers, callees, tests | **Open a file** — instant awareness before coding |
-| `cgraph_intent_search` | Natural language symbol search (BM25) | "find auth middleware" — searches by meaning, not just name |
-| `cgraph_validate_plan` | Pre-flight change risk assessment | Before refactoring — blast radius, affected tests, risk score |
-| `cgraph_lint` | Architecture rule enforcement | CI gate — deny imports, max fan-out, cycle checks |
-| `cgraph_dna` | Codebase fingerprint & health scores | Onboarding — languages, architecture style, health overview |
-| `cgraph_status` | Index health & stats | Debugging, verification |
+Alias supported:
 
----
-
-## 💻 CLI Reference
-
-```
-cgraph <command> [options]
+```bash
+cgraph eval-impact demo/impact-eval-cases.sample.json --dir demo/finance --pretty
 ```
 
-### Core Commands
+Save results to disk:
 
-| Command | Description |
-|:--------|:------------|
-| `index [dir]` | Build / update the code graph (incremental) |
-| `sync [dir]` | Re-index changed files only |
-| `search <query>` | Search symbols — supports `kind:`, `lang:`, `path:`, `role:`, `exported:` filters |
-| `callers <symbol>` | Reverse call graph — who calls this? |
-| `callees <symbol>` | Forward call graph — what does this call? |
-| `impact <symbol>` | What breaks if this changes? |
-| `trace <from> <to>` | Find the call path between two symbols |
-| `context <task>` | Build ranked code context for a task description |
-| `explore <query>` | Get source code for related symbols |
-| `node <symbol>` | Symbol detail with call trail |
-| `query <symbol>` | Look up a symbol with callers/callees |
-| `where <symbol>` | Find where a symbol is defined |
-
-### Analysis Commands
-
-| Command | Description |
-|:--------|:------------|
-| `deadcode` | Find unreachable symbols (dead code) |
-| `cycles` | Detect circular dependencies |
-| `stats` | Project metrics — hotspots, coupling, complexity |
-| `suggest` | AI-powered refactoring suggestions |
-
-### Agentic Intelligence Commands
-
-| Command | Description |
-|:--------|:------------|
-| `auto-context <file>` | File-level warm start — symbols, callers, callees, related tests |
-| `intent <query>` | Natural language symbol search (BM25 scoring) |
-| `validate` | Pre-flight change risk assessment from stdin |
-| `lint` | Architecture rule enforcement via `.cgraph.json` rules |
-| `dna` | Codebase fingerprint — languages, health scores, architecture style |
-
-### Infrastructure Commands
-
-| Command | Description |
-|:--------|:------------|
-| `status` | Index health (files, nodes, edges, languages, roles) |
-| `files` | List all indexed files |
-| `affected <files>` | Find test files impacted by changes |
-| `export` | Generate Mermaid, DOT, or interactive HTML diagrams |
-| `changed` | Map git diff to changed symbols |
-| `watch [dir]` | Watch for file changes and auto re-index |
-| `serve --mcp` | Start MCP server (JSON-RPC 2.0 over stdio) |
-
-### Global Options
-
-```
---depth <n>       Max traversal depth (default: 3)
---max-nodes <n>   Max nodes to return (default: 50)
---kind <kind>     Filter by symbol kind (function, class, method, etc.)
---file <path>     Filter by file path
---json            Raw JSON output
---pretty          Formatted output
+```bash
+cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --save reports/impact-summary.json --pretty
 ```
 
-### Project Configuration
+### 3) Typical engineering questions
 
-Drop a `.cgraph.json` in your project root to customize behavior:
+```bash
+cgraph search "handleRequest" --pretty
+cgraph callers "handleRequest" --pretty
+cgraph callees "handleRequest" --pretty
+cgraph trace "router" "dbWrite" --pretty
+cgraph impact "createUser" --mode decision --pretty
+cgraph affected "src/services/user.ts" --pretty
+cgraph changed --pretty
+```
+
+## CLI commands that matter most
+
+Core:
+
+- `index [dir]` / `sync [dir]`
+- `search <query>`
+- `node <symbol>`
+- `callers <symbol>`
+- `callees <symbol>`
+- `trace <from> <to>`
+- `impact <symbol>`
+- `context <task>`
+- `explore <query>`
+
+Quality and architecture:
+
+- `deadcode`
+- `cycles`
+- `stats`
+- `suggest`
+- `lint`
+- `validate`
+- `dna`
+
+Reliability and benchmarking:
+
+- `smoke`
+- `benchmark` (alias: `eval-impact`)
+
+Infrastructure:
+
+- `status`
+- `files`
+- `changed`
+- `affected`
+- `export`
+- `watch [dir]`
+- `serve --mcp`
+
+## MCP toolset (23 tools)
+
+Discovery and lookup:
+
+- `cgraph_search`, `cgraph_node`, `cgraph_files`, `cgraph_status`
+
+Traversal and impact:
+
+- `cgraph_callers`, `cgraph_callees`, `cgraph_trace`, `cgraph_impact`, `cgraph_affected`, `cgraph_changed`
+
+Context and coding support:
+
+- `cgraph_context`, `cgraph_explore`, `cgraph_auto_context`, `cgraph_intent_search`
+
+Architecture and quality:
+
+- `cgraph_deadcode`, `cgraph_cycles`, `cgraph_stats`, `cgraph_suggest`, `cgraph_validate_plan`, `cgraph_lint`, `cgraph_dna`
+
+Utilities:
+
+- `cgraph_export`, `cgraph_retrieve_ccr`
+
+## Performance and outcome snapshot
+
+Recent workspace benchmark summary (from project scripts):
+
+- 145 calls and 291.5s without graph-native routing
+- 6 calls and 13.6s with cgraph
+- Approximate speedup: 21.4x
+
+Operational characteristics:
+
+- Low-latency query path via in-memory adjacency maps
+- Incremental indexing for changed files
+- Local-first architecture (no mandatory cloud dependency)
+
+## Architecture at a glance
+
+```text
+Codebase -> Parser/Indexer -> SQLite graph (.cgraph/graph.db)
+                                   |
+                             CLI + MCP server
+                                   |
+                      Agent/tool calls with bounded JSON
+```
+
+Key implementation areas:
+
+- `src/indexer.ts` for indexing and change detection
+- `src/graph.ts` for traversal, impact, analysis, suggestions
+- `src/cli.ts` for command workflows and benchmark/smoke flows
+- `src/mcp.ts` for MCP server tool surface
+- `src/storage.ts` for graph persistence and bulk map access
+
+## Development
+
+Run locally:
+
+```bash
+npm install
+npm run build
+npm test
+```
+
+Focused checks:
+
+```bash
+npm test -- __tests__/cli.test.ts __tests__/graph.test.ts
+node ./bin/cgraph.js smoke --dir demo/finance --target createUser --pretty
+node ./bin/cgraph.js benchmark demo/impact-eval-cases.sample.json --dir demo/finance --pretty
+```
+
+## Configuration
+
+Optional `.cgraph.json` in project root:
 
 ```json
 {
@@ -358,301 +229,99 @@ Drop a `.cgraph.json` in your project root to customize behavior:
 }
 ```
 
----
+## Usage as a library
 
-## 📊 Benchmarks
+```ts
+import { GraphDB } from './src/storage';
+import { analyzeImpact } from './src/graph';
 
-> Fresh run on cgraph workspace (`node scripts/benchmark-agent.mjs .` + `node scripts/benchmark.mjs .`)
-> Workspace size during run: 104 files, 848 nodes, 1634 edges.
-
-<table>
-<tr>
-<th align="left">Agent Question</th>
-<th align="center">Without cgraph</th>
-<th align="center">With cgraph</th>
-<th align="center">Speedup</th>
-</tr>
-<tr>
-<td>Where is <code>set</code> defined and who calls it?</td>
-<td align="center">89 calls · 178.0s</td>
-<td align="center"><strong>1 call · 2.3s</strong></td>
-<td align="center">🟢 <strong>78.8x</strong></td>
-</tr>
-<tr>
-<td>Impact of changing <code>AxiosHeaders</code>?</td>
-<td align="center">34 calls · 69.4s</td>
-<td align="center"><strong>1 call · 2.3s</strong></td>
-<td align="center">🟢 <strong>30.7x</strong></td>
-</tr>
-<tr>
-<td>How does <code>handle</code> reach <code>set</code>?</td>
-<td align="center">6 calls · 12.0s</td>
-<td align="center"><strong>1 call · 2.3s</strong></td>
-<td align="center">🟢 <strong>5.3x</strong></td>
-</tr>
-<tr>
-<td>Changed <code>docs/scripts/utils.js</code> — what tests to run?</td>
-<td align="center">5 calls · 10.1s</td>
-<td align="center"><strong>1 call · 2.3s</strong></td>
-<td align="center">🟢 <strong>4.5x</strong></td>
-</tr>
-<tr>
-<td>Explain the architecture</td>
-<td align="center">11 calls · 22.0s</td>
-<td align="center"><strong>2 calls · 4.6s</strong></td>
-<td align="center">🟢 <strong>4.8x</strong></td>
-</tr>
-<tr>
-<td><strong>Total</strong></td>
-<td align="center"><strong>145 calls · 291.5s</strong></td>
-<td align="center"><strong>6 calls · 13.6s</strong></td>
-<td align="center">⚡ <strong>21.4x faster</strong></td>
-</tr>
-</table>
-
-### MCP Tool Latency (self-hosted benchmark)
-
-| Metric | Value |
-|:-------|:------|
-| Avg latency (tool suite) | **20ms** |
-| Min latency | **2ms** (search, callees) |
-| Max latency | **66ms** (explore — includes source read) |
-| Cold index | **803ms** (from scratch) |
-| Warm re-sync | **406ms** (no-change check) |
-| Cold start + query | **204ms** (fire-and-forget) |
-| Burst (10× search) | **6ms/call** |
-
-> Performance powered by bulk adjacency maps — `getFileMap`, `getNodeMap`, `getAdjacencyMaps` load the graph in 3 queries, then all lookups are O(1) map gets. Zero N+1 query patterns.
-
-<details>
-<summary><strong>🏃 Run benchmarks yourself</strong></summary>
-
-```bash
-# Agent workflow comparison (with vs without cgraph)
-node scripts/benchmark-agent.mjs <your-project-dir>
-
-# MCP server latency benchmark (burst, cold start)
-node scripts/benchmark.mjs
-
-# Raw efficiency comparison (grep+read vs cgraph)
-node scripts/benchmark-compare.mjs
-```
-
-</details>
-
----
-
-## 🏗️ Architecture
-
-### How It Works
-
-```mermaid
-flowchart TB
-    subgraph Index["📥 Indexing Pipeline"]
-        direction TB
-        W[File Walker] -->|"*.ts *.py *.c *.sh"| P[Parser]
-        P -->|"symbols + calls"| S[Synthesizer]
-        S -->|"dynamic dispatch edges"| R[Edge Resolver]
-        R -->|"import-aware resolution"| C[Role Classifier]
-    end
-
-    subgraph Store["💾 Storage"]
-        DB[(SQLite via sql.js)]
-        DB --- F[files]
-        DB --- N[nodes]
-        DB --- E[edges]
-    end
-
-    subgraph Serve["🔌 MCP Server"]
-        MCP[JSON-RPC 2.0] --> Cache[LRU Cache]
-        Cache --> Q[Query Engine]
-        Q --> BFS[BFS Traversal]
-        Q --> CTX[Context Builder]
-        Q --> ANA[Analysis Engine]
-      Q --> CMP[SmartCrusher + CCR Store]
-      CMP --> RESP[Bounded JSON Response]
-    end
-
-    Index --> DB
-    DB --> Serve
-    Agent[🤖 AI Agent] <-->|stdio| MCP
-
-    style Agent fill:#8B5CF6,color:#fff
-    style DB fill:#3B82F6,color:#fff
-    style MCP fill:#22C55E,color:#fff
-```
-
-### Design Principles
-
-| Principle | Implementation |
-|:----------|:---------------|
-| **Zero cloud dependencies** | Pure JS/WASM — `sql.js` instead of `better-sqlite3`, no native bindings |
-| **Incremental by default** | 3-tier: mtime+size → content hash → parse. Rebuilds only what changed |
-| **Import-aware resolution** | Resolves calls through imports: import match > same-file > global name |
-| **Smart role classification** | Symbols tagged as `entry` · `core` · `hub` · `bridge` · `utility` · `leaf` · `test` · `dead` |
-| **Bounded traversal** | BFS with `maxDepth` + `maxNodes` caps + cycle detection |
-| **Token-conscious** | Context payloads include estimated token counts so agents can budget |
-| **Adaptive compression** | SmartCrusher compacts oversized payloads and stores lossless CCR snapshots retrievable via `cgraph_retrieve_ccr` |
-| **Bulk query optimization** | Adjacency maps loaded in 3 SQL queries — all per-node lookups are O(1) map gets |
-
-### Supported Languages
-
-<table>
-<tr>
-<td align="center">
-<strong>JavaScript</strong><br/>
-<code>.js</code> <code>.jsx</code> <code>.mjs</code> <code>.cjs</code><br/>
-<sub>via @babel/parser</sub>
-</td>
-<td align="center">
-<strong>TypeScript</strong><br/>
-<code>.ts</code> <code>.tsx</code><br/>
-<sub>via @babel/parser</sub>
-</td>
-<td align="center">
-<strong>Python</strong><br/>
-<code>.py</code> <code>.pyi</code><br/>
-<sub>regex-based</sub>
-</td>
-</tr>
-<tr>
-<td align="center">
-<strong>C / C++</strong><br/>
-<code>.c</code> <code>.h</code> <code>.cpp</code> <code>.cc</code> <code>.hpp</code><br/>
-<sub>regex-based · #include resolution</sub>
-</td>
-<td align="center">
-<strong>Shell</strong><br/>
-<code>.sh</code> <code>.bash</code> <code>.zsh</code><br/>
-<sub>regex-based · source/. imports</sub>
-</td>
-<td align="center">
-<strong>PowerShell</strong><br/>
-<code>.ps1</code> <code>.psm1</code> <code>.psd1</code><br/>
-<sub>regex-based · dot-sourcing</sub>
-</td>
-</tr>
-</table>
-
-### Framework Detection
-
-Route and endpoint extraction for: **Express** · **React Router** · **Next.js** · **Flask** · **FastAPI** · **Django**
-
-### Database Schema
-
-Per-project SQLite at `.cgraph/graph.db`:
-
-```
-┌──────────┐     ┌──────────────────────────────────────────────┐     ┌───────────┐
-│  files   │     │                   nodes                     │     │   edges   │
-├──────────┤     ├──────────────────────────────────────────────┤     ├───────────┤
-│ id       │◄───┐│ id · file_id · name · qualified_name        │┌───►│ source_id │
-│ path     │    ││ kind · start_line · end_line · signature    ││    │ target_id │
-│ hash     │    └┤ doc · exported · role                       ├┘    │ kind      │
-│ language │     └──────────────────────────────────────────────┘     └───────────┘
-│ mtime    │                        ▲
-│ size     │     ┌──────────┐       │         ┌──────────┐
-└──────────┘     │ raw_refs │───────┘         │ metadata │
-                 │ caller   │                 │ key      │
-                 │ callee   │                 │ value    │
-                 │ kind     │                 └──────────┘
-                 └──────────┘
-```
-
----
-
-## 📁 Project Structure
-
-```
-cgraph/
-├── bin/cgraph.js                  # CLI entry point
-├── src/
-│   ├── cli.ts                     # 28 CLI commands (commander)
-│   ├── config.ts                  # Configuration + .cgraph.json loader
-│   ├── context.ts                 # Context builder (search → expand → snippets)
-│   ├── graph.ts                   # BFS traversal, impact, trace, dead code, cycles, suggest
-│   ├── indexer.ts                 # File walker + parallel parser + incremental edge resolver
-│   ├── mcp.ts                     # MCP server (23 tools, JSON-RPC 2.0, progress notifications)
-│   ├── storage.ts                 # GraphDB (sql.js WASM SQLite)
-│   ├── parser.ts                  # Multi-language parser (babel + regex)
-│   ├── synthesizer.ts             # Dynamic dispatch edge synthesis
-│   ├── frameworks.ts              # Framework route extraction
-│   ├── lint.ts                    # Architecture rule enforcement engine
-│   ├── search.ts                  # Fuzzy symbol search + BM25 intent search
-│   ├── export.ts                  # Mermaid / DOT / HTML diagram generation
-│   ├── cache.ts                   # LRU cache with disk persistence
-│   ├── watcher.ts                 # File watcher with debounced re-index
-│   ├── git.ts                     # Git diff → changed symbol mapping
-│   ├── adaptive.ts                # Dynamic traversal limits
-│   ├── query-parser.ts            # Search query field extraction
-│   ├── gitignore.ts               # .gitignore parsing
-│   └── types.ts                   # All type definitions
-├── __tests__/                     # 427 tests (vitest)
-├── scripts/                       # Benchmarks, installers, smoke tests
-├── demo/                          # Finance tracker + C++/Shell demos
-├── install.ps1 / install.sh       # Standalone installers
-└── .cgraph.json                   # Project-level configuration
-```
-
----
-
-## 🧪 Development
-
-```bash
-npm run build              # compile TypeScript
-npm run dev                # watch mode (rebuild on save)
-npm test                   # run 427 unit tests
-npm run test:watch         # watch tests
-```
-
-<details>
-<summary><strong>📜 All scripts</strong></summary>
-
-| Script | Purpose |
-|:-------|:--------|
-| `install.ps1` / `install.sh` | Standalone installer (downloads Node if needed) |
-| `scripts/local-install.ps1` / `.sh` | Build + npm link for dev testing |
-| `scripts/smoke-test.ps1` / `.sh` | End-to-end CLI smoke tests |
-| `scripts/setup-mcp.ps1` | Auto-configure MCP for a project |
-| `scripts/setup-agent.ps1` | End-to-end workspace bootstrap: build + MCP + Copilot agent settings + dropdown agent validation |
-| `scripts/benchmark.mjs` | MCP server latency benchmark (burst, cold start) |
-| `scripts/benchmark-agent.mjs` | Agent workflow benchmark — with vs without cgraph |
-| `scripts/benchmark-compare.mjs` | Raw efficiency comparison (grep+read vs cgraph) |
-
-</details>
-
----
-
-## 📚 Usage as Library
-
-```typescript
-import { GraphDB } from 'cgraph/storage';
-import { indexProject } from 'cgraph/indexer';
-import { findCallers, suggestRefactorings } from 'cgraph/graph';
-import { buildContext } from 'cgraph/context';
-
-// Index & query
 const db = await GraphDB.open('.cgraph/graph.db');
-await indexProject('.');
-
-const callers = findCallers(db, 'handleRequest', { maxDepth: 3 });
-const suggestions = suggestRefactorings(db, { file: 'src/app.ts' });
-
+const result = analyzeImpact(db, 'createUser', { mode: 'decision', maxDepth: 3, maxNodes: 50, rootDir: process.cwd() });
+console.log(result);
 db.close();
 ```
 
----
+## Architecture deep dive
 
-<div align="center">
+```mermaid
+flowchart LR
+  A[Repository files] --> B[Parser and Indexer]
+  B --> C[(.cgraph/graph.db)]
+  C --> D[Graph engine\ncallers/callees/impact/trace]
+  D --> E[CLI commands]
+  D --> F[MCP server tools]
+  E --> G[Terminal workflows]
+  F --> H[Copilot and agent workflows]
+```
 
-## 📄 License
+Core layers:
 
-**AGPL-3.0** — see [LICENSE](LICENSE) for details.
+- Ingestion layer: file walking, language parsing, symbol and edge extraction.
+- Storage layer: local SQLite graph with nodes, edges, and file metadata.
+- Analysis layer: traversal, impact heuristics, trace, dead code, cycles, and stats.
+- Interface layer: CLI commands and MCP tools for agent orchestration.
 
-For proprietary/closed-source usage, contact the author for a commercial license.
+## End-to-end flows
 
----
+### Flow 1: Index and query
 
-<sub>Built with ❤️ for developers who want their AI agents to actually understand their code.</sub>
+```mermaid
+sequenceDiagram
+  participant Dev as Developer/Agent
+  participant CLI as cgraph CLI
+  participant IDX as Indexer
+  participant DB as Graph DB
 
-</div>
+  Dev->>CLI: cgraph index <repo>
+  CLI->>IDX: Parse files and extract graph
+  IDX->>DB: Upsert files/nodes/edges
+  Dev->>CLI: cgraph callers <symbol>
+  CLI->>DB: Read adjacency maps
+  DB-->>CLI: Structured graph answer
+  CLI-->>Dev: JSON output
+```
+
+### Flow 2: Change-risk evaluation
+
+```mermaid
+sequenceDiagram
+  participant Dev as Developer/Agent
+  participant CLI as cgraph benchmark
+  participant ENG as Impact engine
+  participant DB as Graph DB
+  participant REP as Report
+
+  Dev->>CLI: Run benchmark/eval-impact with cases JSON
+  CLI->>DB: Load indexed graph
+  CLI->>ENG: Evaluate expected vs actual impact sets
+  ENG->>REP: Compute per-case precision/recall
+  REP-->>CLI: Summary + case breakdown
+  CLI-->>Dev: JSON output and optional saved file
+```
+
+### Flow 3: Agent runtime with MCP
+
+```mermaid
+sequenceDiagram
+  participant Agent as Copilot Agent
+  participant MCP as cgraph MCP server
+  participant DB as Graph DB
+
+  Agent->>MCP: cgraph_search / cgraph_node
+  MCP->>DB: Symbol lookup
+  DB-->>MCP: Names, files, signatures
+  Agent->>MCP: cgraph_callers / cgraph_impact
+  MCP->>DB: Graph traversal
+  DB-->>MCP: Ranked affected nodes/files
+  MCP-->>Agent: Bounded context payload
+```
+
+Operational notes:
+
+- Smoke flow validates search, context, impact, and stats quickly in one command.
+- Benchmark flow validates impact quality on curated cases without forcing PR checks.
+- Incremental sync flow keeps graph freshness with reduced indexing cost.
+
+## License
+
+AGPL-3.0. See `LICENSE`.

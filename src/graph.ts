@@ -11,6 +11,8 @@ import type {
   NodeRecord, EdgeRecord, TraverseOptions, TraverseResult, EdgeKind,
   TraceResult, TraceHop, NodeDetail, TrailEntry, FileInfo,
   AutoContextResult, AutoContextSymbol, PlanValidation, CodebaseDNA,
+  ImpactResult, ImpactNodeFinding, ImpactScopeInfo,
+  ImpactEvaluationCase, ImpactEvaluationCaseResult, ImpactEvaluationSummary,
 } from './types';
 
 // ─── BFS traversal ──────────────────────────────────────────────
@@ -148,17 +150,105 @@ export function findCallees(
 }
 
 // ─── impact: what breaks if this changes? ───────────────────────
+function buildImpactScope(db: GraphDB, rootDir: string | undefined, mode: 'discovery' | 'decision'): ImpactScopeInfo {
+  const status = db.getStatus(rootDir ?? '.');
+  return {
+    root_dir: rootDir ?? '.',
+    indexed_roots: rootDir ? [rootDir] : [],
+    indexed_files: status.files_count,
+    indexed_nodes: status.nodes_count,
+    indexed_edges: status.edges_count,
+    last_indexed: status.last_indexed,
+    mode,
+  };
+}
+
+function inferRelationshipMetadata(
+  rootDir: string | undefined,
+  filePath: string,
+  parentNode: NodeRecord | null,
+  targetNode: NodeRecord | null,
+  edgeKind: string | null,
+  mode: 'discovery' | 'decision',
+): { relationType: ImpactNodeFinding['relation_type']; confidence: ImpactNodeFinding['confidence']; evidenceExcerpt: string; rationale: string } {
+  const fallback = {
+    relationType: (edgeKind === 'calls' ? 'calls' : edgeKind === 'imports' ? 'imports' : 'heuristic') as ImpactNodeFinding['relation_type'],
+    confidence: 'grounded' as ImpactNodeFinding['confidence'],
+    evidenceExcerpt: `${edgeKind ?? 'relation'} edge from ${parentNode?.name ?? 'upstream symbol'} to ${targetNode?.name ?? 'the target'}`,
+    rationale: `This node was discovered through a ${edgeKind ?? 'graph'} relationship and may be impacted by the requested change.`,
+  };
+
+  if (!rootDir || !parentNode || !targetNode) return fallback;
+
+  const sourceNode = targetNode;
+  const snippet = readSourceRange(rootDir, filePath, sourceNode.start_line, sourceNode.end_line, 80);
+  if (!snippet) return fallback;
+
+  const targetName = targetNode.name.toLowerCase();
+  const lowerSnippet = snippet.toLowerCase();
+  const hasTarget = lowerSnippet.includes(targetName);
+  const hasGuard = /\b(if|else|switch|case|for|while|do|&&|\|\||\?)\b/.test(snippet);
+  const hasSideEffect = /\b(start|stop|enable|disable|reload|reset|save|set)\b/.test(snippet);
+
+  if (mode === 'decision' && hasTarget && hasGuard) {
+    const conditionLine = snippet.split('\n').find(line => /\b(if|switch|case|for|while|do|else)\b/i.test(line)) ?? snippet.split('\n')[0];
+    return {
+      relationType: 'condition',
+      confidence: 'likely',
+      evidenceExcerpt: `Guarded path detected: ${conditionLine.trim()}`,
+      rationale: 'The relationship appears to be conditional and should be treated as gated rather than unconditional.',
+    };
+  }
+
+  if (hasTarget && hasSideEffect) {
+    return {
+      relationType: 'condition',
+      confidence: 'likely',
+      evidenceExcerpt: `Side-effect-like logic detected near ${targetNode.name}.`,
+      rationale: 'The surrounding code suggests a side-effectful path that may change behavior when the target changes.',
+    };
+  }
+
+  return fallback;
+}
+
+function buildImpactNode(
+  node: NodeRecord,
+  filePath: string,
+  depth: number,
+  parentNode: NodeRecord | null,
+  edgeKind: string | null,
+  mode: 'discovery' | 'decision',
+  rootDir: string | undefined,
+): ImpactNodeFinding {
+  const direct = depth === 0 ? 'target' : edgeKind === 'calls' ? 'calls' : edgeKind === 'imports' ? 'imports' : 'heuristic';
+  const confidence = depth === 0 ? 'grounded' : depth === 1 ? 'grounded' : mode === 'decision' ? 'likely' : 'likely';
+  const evidenceExcerpt = depth === 0
+    ? `Target symbol "${node.name}" was selected as the change point.`
+    : `${edgeKind ?? 'relation'} edge from ${parentNode?.name ?? 'upstream symbol'} to ${node.name}`;
+  const rationale = depth === 0
+    ? 'This is the requested symbol; changing it may affect its dependents.'
+    : `This node was discovered through a ${edgeKind ?? 'graph'} relationship and may be impacted by the requested change.`;
+
+  const metadata = depth === 0 ? null : inferRelationshipMetadata(rootDir, filePath, parentNode, node, edgeKind, mode);
+  return {
+    ...node,
+    file_path: filePath,
+    depth,
+    confidence: metadata?.confidence ?? confidence,
+    relation_type: metadata?.relationType ?? (depth === 0 ? 'target' : direct),
+    evidence_excerpt: metadata?.evidenceExcerpt ?? evidenceExcerpt,
+    rationale: metadata?.rationale ?? rationale,
+    evidence_file: filePath,
+    evidence_line: node.start_line,
+  };
+}
+
 export function analyzeImpact(
   db: GraphDB,
   target: string,  // symbol name or file path
-  opts: { maxDepth?: number; maxNodes?: number } = {},
-): {
-  target: string;
-  impacted_nodes: (NodeRecord & { file_path: string; depth: number })[];
-  impacted_files: string[];
-  edges: EdgeRecord[];
-  truncated: boolean;
-} {
+  opts: { maxDepth?: number; maxNodes?: number; rootDir?: string; mode?: 'discovery' | 'decision' } = {},
+): ImpactResult {
   // Try as symbol first
   let nodes = db.findNodesByName(target);
 
@@ -170,6 +260,10 @@ export function analyzeImpact(
     }
   }
 
+  const maxDepth = opts.maxDepth ?? 3;
+  const maxNodes = opts.maxNodes ?? 50;
+  const mode = opts.mode ?? 'discovery';
+
   if (nodes.length === 0) {
     return {
       target,
@@ -177,37 +271,62 @@ export function analyzeImpact(
       impacted_files: [],
       edges: [],
       truncated: false,
+      scope: buildImpactScope(db, opts.rootDir, mode),
+      warnings: ['No matching symbol or file was found.'],
     };
   }
 
   // Merge reverse traversals from all matching nodes
   const visited = new Set<number>();
-  const allNodes: (NodeRecord & { file_path: string; depth: number })[] = [];
+  const allNodes: ImpactNodeFinding[] = [];
   const allEdges: EdgeRecord[] = [];
   let truncated = false;
-  const maxNodes = opts.maxNodes ?? 50;
+
+  const nodesById = db.getNodeMap();
+  const fileMap = db.getFileMap();
+  const adjacency = db.getAdjacencyMaps();
+  const incoming = adjacency.incoming;
+  const outgoing = adjacency.outgoing;
 
   for (const node of nodes) {
     if (allNodes.length >= maxNodes) { truncated = true; break; }
 
-    const result = traverse(db, node.id, {
-      maxDepth: opts.maxDepth ?? 3,
-      maxNodes: maxNodes - allNodes.length,
-      direction: 'backward',
-      edgeKinds: ['calls', 'imports'],
-    });
+    const queue: Array<{ id: number; depth: number; parentId: number | null; edgeKind: string | null }> = [{ id: node.id, depth: 0, parentId: null, edgeKind: null }];
+    const localVisited = new Set<number>([node.id]);
 
-    for (const n of result.nodes) {
-      if (!visited.has(n.id)) {
-        visited.add(n.id);
-        allNodes.push(n);
+    while (queue.length > 0 && allNodes.length < maxNodes) {
+      const current = queue.shift()!;
+      if (current.depth > maxDepth) continue;
+
+      const currentNode = nodesById.get(current.id) ?? db.getNode(current.id);
+      if (!currentNode) continue;
+
+      const filePath = fileMap.get(currentNode.file_id)?.path ?? '';
+      const parentNode = current.parentId ? (nodesById.get(current.parentId) ?? null) : null;
+      const impactNode = buildImpactNode(currentNode, filePath, current.depth, parentNode, current.edgeKind, mode, opts.rootDir);
+
+      if (!visited.has(currentNode.id)) {
+        visited.add(currentNode.id);
+        allNodes.push(impactNode);
+      }
+
+      const incomingEdges = incoming.get(currentNode.id) ?? [];
+      for (const edge of incomingEdges) {
+        const isRelevant = edge.kind === 'calls' || edge.kind === 'imports';
+        if (!isRelevant) continue;
+        const sourceNode = nodesById.get(edge.source_id) ?? db.getNode(edge.source_id);
+        if (!sourceNode || localVisited.has(edge.source_id)) continue;
+        localVisited.add(edge.source_id);
+        allEdges.push(edge);
+        queue.push({ id: edge.source_id, depth: current.depth + 1, parentId: currentNode.id, edgeKind: edge.kind });
       }
     }
-    allEdges.push(...result.edges);
-    if (result.truncated) truncated = true;
   }
 
   const impactedFiles = [...new Set(allNodes.map(n => n.file_path))];
+  const warnings = allNodes.some(n => n.confidence !== 'grounded')
+    ? ['Some relationships are inferred through traversal and may be speculative.']
+    : [];
 
   return {
     target,
@@ -215,7 +334,50 @@ export function analyzeImpact(
     impacted_files: impactedFiles,
     edges: allEdges,
     truncated,
+    scope: buildImpactScope(db, opts.rootDir, mode),
+    warnings,
   };
+}
+
+export function evaluateImpactCases(
+  db: GraphDB,
+  rootDir: string,
+  cases: ImpactEvaluationCase[],
+  opts: { maxDepth?: number; maxNodes?: number } = {},
+): ImpactEvaluationSummary {
+  const caseResults: ImpactEvaluationCaseResult[] = cases.map(c => {
+    const result = analyzeImpact(db, c.target, {
+      rootDir,
+      maxDepth: opts.maxDepth ?? 3,
+      maxNodes: opts.maxNodes ?? 50,
+      mode: c.mode ?? 'discovery',
+    });
+    const impactedNames = result.impacted_nodes.map(n => n.name);
+    const expected = c.expected_symbols ?? [];
+    const matched = expected.filter(name => impactedNames.includes(name));
+    const missing = expected.filter(name => !impactedNames.includes(name));
+    const unexpected = impactedNames.filter(name => name !== c.target && !expected.includes(name));
+    const precision = impactedNames.filter(name => name !== c.target).length > 0 ? matched.length / impactedNames.filter(name => name !== c.target).length : 0;
+    const recall = expected.length > 0 ? matched.length / expected.length : 0;
+    return {
+      name: c.name,
+      target: c.target,
+      passed: missing.length === 0 && unexpected.length === 0,
+      matched,
+      missing,
+      unexpected,
+      precision,
+      recall,
+      total_impacted: impactedNames.filter(name => name !== c.target).length,
+    };
+  });
+
+  const total = caseResults.length;
+  const passed = caseResults.filter(c => c.passed).length;
+  const precision = total > 0 ? caseResults.reduce((acc, c) => acc + c.precision, 0) / total : 0;
+  const recall = total > 0 ? caseResults.reduce((acc, c) => acc + c.recall, 0) / total : 0;
+
+  return { total, passed, cases: caseResults, precision, recall };
 }
 
 // ─── find symbol ────────────────────────────────────────────────

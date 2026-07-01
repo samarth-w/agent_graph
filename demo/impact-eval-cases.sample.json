@@ -1,0 +1,8 @@
+[
+  {
+    "name": "sample-guarded-impact",
+    "target": "createUser",
+    "expected_symbols": ["deleteUser"],
+    "mode": "decision"
+  }
+]

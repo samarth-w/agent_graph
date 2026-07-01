@@ -4,7 +4,8 @@
 export { GraphDB } from './storage';
 export { parseFile } from './parser';
 export { indexProject } from './indexer';
-export { traverse, findCallers, findCallees, analyzeImpact, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected } from './graph';
+export { traverse, findCallers, findCallees, analyzeImpact, evaluateImpactCases, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected } from './graph';
+export { loadImpactEvaluationCasesFromFile, evaluateImpactCasesFromFile } from './cli';
 export { searchSymbols } from './search';
 export { parseQuery } from './query-parser';
 export { buildContext, explore } from './context';

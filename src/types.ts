@@ -132,6 +132,64 @@ export interface TraverseResult {
   truncated: boolean;
 }
 
+export interface ImpactNodeFinding extends NodeRecord {
+  file_path: string;
+  depth: number;
+  confidence: 'grounded' | 'likely' | 'speculative';
+  relation_type: 'target' | 'calls' | 'imports' | 'condition' | 'copy' | 'heuristic';
+  evidence_excerpt: string;
+  rationale: string;
+  evidence_file: string;
+  evidence_line: number;
+}
+
+export interface ImpactScopeInfo {
+  root_dir: string;
+  indexed_roots: string[];
+  indexed_files: number;
+  indexed_nodes: number;
+  indexed_edges: number;
+  last_indexed: string | null;
+  mode: 'discovery' | 'decision';
+}
+
+export interface ImpactResult {
+  target: string;
+  impacted_nodes: ImpactNodeFinding[];
+  impacted_files: string[];
+  edges: EdgeRecord[];
+  truncated: boolean;
+  scope: ImpactScopeInfo;
+  warnings: string[];
+}
+
+export interface ImpactEvaluationCase {
+  name: string;
+  target: string;
+  expected_symbols: string[];
+  mode?: 'discovery' | 'decision';
+}
+
+export interface ImpactEvaluationCaseResult {
+  name: string;
+  target: string;
+  passed: boolean;
+  matched: string[];
+  missing: string[];
+  unexpected: string[];
+  precision: number;
+  recall: number;
+  total_impacted: number;
+}
+
+export interface ImpactEvaluationSummary {
+  total: number;
+  passed: number;
+  cases: ImpactEvaluationCaseResult[];
+  precision: number;
+  recall: number;
+}
+
 // ─── Context builder output ───────────────────────────────────
 export interface ContextPayload {
   query: string;

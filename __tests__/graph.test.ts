@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { GraphDB } from '../src/storage';
-import { traverse, findCallers, findCallees, analyzeImpact, tracePath } from '../src/graph';
+import { traverse, findCallers, findCallees, analyzeImpact, tracePath, evaluateImpactCases } from '../src/graph';
 
 function createTempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cgraph-graph-test-'));
@@ -118,6 +118,60 @@ describe('Graph Queries', () => {
       const result = analyzeImpact(db, 'D');
       const names = result.impacted_nodes.map(n => n.name);
       expect(names).toContain('A');
+    });
+
+    it('returns evidence metadata and scope info for impacted nodes', () => {
+      const result = analyzeImpact(db, 'C', { rootDir: tempDir });
+      expect(result.scope).toBeDefined();
+      expect(result.scope.root_dir).toBe(tempDir);
+      expect(result.warnings).toEqual(expect.any(Array));
+      const caller = result.impacted_nodes.find(n => n.name === 'B');
+      expect(caller).toBeDefined();
+      expect(caller?.relation_type).toBe('calls');
+      expect(caller?.confidence).toBe('grounded');
+      expect(caller?.evidence_excerpt).toContain('calls');
+      expect(caller?.rationale).toContain('impact');
+      expect(caller?.evidence_file).toBeDefined();
+      expect(caller?.evidence_line).toBeGreaterThan(0);
+    });
+
+    it('marks guarded call sites as condition-related in decision mode', () => {
+      const fid = db.upsertFile('src/guarded.ts', 'h2', 'typescript', 100, 1000).id;
+      fs.writeFileSync(path.join(tempDir, 'src', 'guarded.ts'), `function A() {\n  if (flag) {\n    B();\n  }\n}\nfunction B() {}\n`);
+      const idA = db.insertNode(fid, 'A', 'src/guarded.ts::A', 'function', 1, 4, 'function A()', null, true);
+      const idB = db.insertNode(fid, 'B', 'src/guarded.ts::B', 'function', 5, 5, 'function B()', null, true);
+      db.insertEdge(idA, idB, 'calls');
+
+      const result = analyzeImpact(db, 'B', { rootDir: tempDir, mode: 'decision' });
+      const guarded = result.impacted_nodes.find(n => n.name === 'A' && n.file_path === 'src/guarded.ts');
+      expect(guarded).toBeDefined();
+      expect(guarded?.relation_type).toBe('condition');
+      expect(guarded?.evidence_excerpt.toLowerCase()).toContain('if');
+      expect(guarded?.rationale.toLowerCase()).toContain('conditional');
+      expect(result.impacted_nodes.some(n => n.confidence === 'likely')).toBe(true);
+    });
+  });
+
+  describe('evaluateImpactCases', () => {
+    it('summarizes benchmark results with precision and recall', () => {
+      const fid = db.upsertFile('src/bench.ts', 'h3', 'typescript', 100, 1000).id;
+      fs.writeFileSync(path.join(tempDir, 'src', 'bench.ts'), `function Alpha() {\n  if (enabled) {\n    Beta();\n  }\n}\nfunction Beta() {}\n`);
+      const idA = db.insertNode(fid, 'Alpha', 'src/bench.ts::Alpha', 'function', 1, 4, 'function Alpha()', null, true);
+      const idB = db.insertNode(fid, 'Beta', 'src/bench.ts::Beta', 'function', 5, 5, 'function Beta()', null, true);
+      db.insertEdge(idA, idB, 'calls');
+
+      const summary = evaluateImpactCases(db, tempDir, [
+        { name: 'guarded-case', target: 'Beta', expected_symbols: ['Alpha'], mode: 'decision' },
+      ]);
+
+      expect(summary.total).toBe(1);
+      expect(summary.passed).toBe(1);
+      expect(summary.cases[0].matched).toContain('Alpha');
+      expect(summary.cases[0].precision).toBeGreaterThan(0);
+      expect(summary.cases[0].recall).toBe(1);
+      expect(summary.precision).toBeGreaterThan(0);
+      expect(summary.recall).toBe(1);
+      expect(summary.cases[0].total_impacted).toBeGreaterThanOrEqual(1);
     });
   });
 

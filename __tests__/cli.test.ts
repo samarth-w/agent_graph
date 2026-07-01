@@ -10,6 +10,7 @@ import { GraphDB } from '../src/storage';
 import { searchSymbols } from '../src/search';
 import { buildContext } from '../src/context';
 import { getDbPath, loadConfig } from '../src/config';
+import { loadImpactEvaluationCasesFromFile, evaluateImpactCasesFromFile, runCapabilitySmokeCheck } from '../src/cli';
 
 function createTempDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'cgraph-cli-test-')); }
 
@@ -59,5 +60,43 @@ describe('CLI helpers (integration)', () => {
   it('searchSymbols returns empty array for unknown symbol', () => {
     const results = searchSymbols(db, 'xyznotthere', { limit: 5 });
     expect(Array.isArray(results)).toBe(true);
+  });
+
+  it('loads impact evaluation cases from a JSON file', () => {
+    const casesPath = path.join(tempDir, 'impact-cases.json');
+    fs.writeFileSync(casesPath, JSON.stringify([
+      { name: 'guarded-case', target: 'Alpha', expected_symbols: ['Beta'], mode: 'decision' },
+    ]));
+
+    const cases = loadImpactEvaluationCasesFromFile(casesPath);
+    expect(cases).toEqual([
+      { name: 'guarded-case', target: 'Alpha', expected_symbols: ['Beta'], mode: 'decision' },
+    ]);
+  });
+
+  it('rejects malformed impact evaluation case files', () => {
+    const casesPath = path.join(tempDir, 'bad-impact-cases.json');
+    fs.writeFileSync(casesPath, JSON.stringify([{ name: 'bad-case', target: '' }]));
+
+    expect(() => loadImpactEvaluationCasesFromFile(casesPath)).toThrow(/non-empty target/i);
+  });
+
+  it('evaluates impact cases from a JSON file', () => {
+    const casesPath = path.join(tempDir, 'impact-cases.json');
+    fs.writeFileSync(casesPath, JSON.stringify([
+      { name: 'sample-case', target: 'createUser', expected_symbols: ['deleteUser'], mode: 'decision' },
+    ]));
+
+    const summary = evaluateImpactCasesFromFile(db, tempDir, casesPath, { maxDepth: 2, maxNodes: 10 });
+    expect(summary.total).toBe(1);
+    expect(summary.cases[0].name).toBe('sample-case');
+  });
+
+  it('reports core capabilities in a smoke check', async () => {
+    const report = await runCapabilitySmokeCheck(db, tempDir, { targetSymbol: 'createUser' });
+    expect(report.ok).toBe(true);
+    expect(report.passed).toBeGreaterThan(0);
+    expect(report.checks.some(check => check.name === 'search')).toBe(true);
+    expect(report.checks.some(check => check.name === 'impact')).toBe(true);
   });
 });

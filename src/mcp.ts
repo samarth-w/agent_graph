@@ -578,7 +578,13 @@ class ToolHandler {
       symbolName: symbol,
       explicitDepth: args.depth != null ? clamp(Number(args.depth), 1, 10) : undefined,
     });
-    const result = analyzeImpact(db, symbol, { maxDepth: adaptive.maxDepth, maxNodes: adaptive.maxNodes });
+    const mode = (args.mode as string | undefined) === 'decision' ? 'decision' : 'discovery';
+    const result = analyzeImpact(db, symbol, {
+      maxDepth: adaptive.maxDepth,
+      maxNodes: adaptive.maxNodes,
+      rootDir: this.rootDir,
+      mode,
+    });
     if (result.impacted_nodes.length === 0) return this.textResult(`No impact found for "${symbol}"`);
     return this.compressedResult(db, args, result);
   }
