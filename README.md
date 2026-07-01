@@ -1,34 +1,38 @@
+<div align="center">
+
 # cgraph
 
-Graph-native code intelligence for AI agents and engineering teams.
+### Code intelligence that feels instant.
 
-cgraph turns codebases into a queryable graph so agents can answer structural questions in one step: callers, callees, impact, traces, changed symbols, affected tests, and architecture risk.
+Turn any codebase into a queryable graph so developers and AI agents can move from question to decision in one step.
 
-Instead of multi-step grep + file-hopping loops, cgraph provides bounded, high-signal responses optimized for speed and decision quality.
+[Why it wins](#why-cgraph-wins) · [Quick start](#quick-start) · [Core workflows](#core-workflows) · [Architecture](#architecture) · [CLI and MCP](#cli-and-mcp)
 
-## Why teams adopt cgraph
+</div>
 
-cgraph is built around measurable outcomes:
+---
 
-- Faster time-to-answer for architecture and change-risk questions.
-- Lower token/tool overhead by replacing search chains with graph queries.
-- Better confidence via evidence-backed impact output and evaluation summaries.
-- Practical production workflow: smoke checks, benchmark harness, and incremental indexing.
+## The one-line pitch
 
-## What cgraph does
+cgraph precomputes repository structure and relationships so you can answer high-value engineering questions without grep chains, file hopping, or context sprawl.
 
-- Indexes repositories into a local graph database in `.cgraph/graph.db`.
-- Extracts symbols and relationships across multiple languages.
-- Exposes 23 MCP tools for agent workflows.
-- Provides a CLI for direct usage in terminals and CI.
-- Supports impact evaluation suites with precision/recall summaries.
+## Why cgraph wins
 
-## Supported languages
+### Faster decisions
 
-- TypeScript / JavaScript
-- Python
-- C / C++
-- Shell / PowerShell
+- Ask once, get callers, callees, impact, trace, changed symbols, and affected tests.
+- Replace multi-step investigation loops with single graph-native queries.
+
+### Better confidence
+
+- Impact output includes evidence-aware reasoning.
+- Optional benchmark suites report precision and recall for impact quality.
+
+### Built for real workflows
+
+- Local-first architecture with low-latency responses.
+- Incremental indexing and watch mode for day-to-day development.
+- CLI plus MCP tools for terminal, CI, and agent runtime usage.
 
 ## Quick start
 
@@ -56,44 +60,45 @@ npm run build
 npm link
 ```
 
-### First run
+### First 3 commands
 
 ```bash
 cgraph index .
 cgraph status . --pretty
+cgraph smoke --dir demo/finance --target createUser --pretty
 ```
 
-## High-value workflows
+## Core workflows
 
-### 1) Smoke check core capabilities
+### 1. Validate the stack in one shot
 
-Confirms search, context, impact, and stats in one command.
+Smoke checks verify search, context, impact, and stats in one command.
 
 ```bash
 cgraph smoke --dir demo/finance --target createUser --pretty
 ```
 
-### 2) Run impact benchmark on demand
+### 2. Benchmark impact quality on demand
 
-Uses a JSON case file and returns case-level plus aggregate metrics.
+Run curated impact cases without forcing checks on every PR.
 
 ```bash
 cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --pretty
 ```
 
-Alias supported:
+Alias:
 
 ```bash
 cgraph eval-impact demo/impact-eval-cases.sample.json --dir demo/finance --pretty
 ```
 
-Save results to disk:
+Save a report artifact:
 
 ```bash
 cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --save reports/impact-summary.json --pretty
 ```
 
-### 3) Typical engineering questions
+### 3. Solve common engineering questions fast
 
 ```bash
 cgraph search "handleRequest" --pretty
@@ -105,98 +110,126 @@ cgraph affected "src/services/user.ts" --pretty
 cgraph changed --pretty
 ```
 
-## CLI commands that matter most
+## Performance snapshot
+
+Recent benchmark summary in this workspace:
+
+- Without graph-native flow: 145 calls, 291.5s
+- With cgraph: 6 calls, 13.6s
+- Net speedup: about 21.4x
+
+Why it stays fast:
+
+- Precomputed symbol and relationship graph.
+- Bulk adjacency maps instead of repeated scans.
+- Incremental sync for lower update cost.
+
+## Architecture
+
+### At a glance
+
+```text
+Repository files -> Parser + Indexer -> .cgraph/graph.db
+                                         |
+                                  Graph engine
+                           (search, trace, impact, stats)
+                                         |
+                                 CLI and MCP tools
+```
+
+### Layer model
+
+- Ingestion layer: file walking, parsing, symbol and edge extraction.
+- Storage layer: local SQLite graph with files, nodes, and edges.
+- Analysis layer: traversal, impact heuristics, cycles, dead code, stats.
+- Interface layer: CLI commands and MCP server tools.
+
+### End-to-end flows
+
+Flow 1: index and query
+
+```mermaid
+sequenceDiagram
+  participant Dev as Developer or Agent
+  participant CLI as cgraph CLI
+  participant IDX as Indexer
+  participant DB as Graph DB
+
+  Dev->>CLI: cgraph index <repo>
+  CLI->>IDX: Parse and extract graph
+  IDX->>DB: Upsert files, nodes, edges
+  Dev->>CLI: cgraph callers <symbol>
+  CLI->>DB: Query adjacency maps
+  DB-->>CLI: Structured result
+  CLI-->>Dev: JSON answer
+```
+
+Flow 2: impact benchmark
+
+```mermaid
+sequenceDiagram
+  participant Dev as Developer or Agent
+  participant CLI as cgraph benchmark
+  participant ENG as Impact engine
+  participant DB as Graph DB
+
+  Dev->>CLI: benchmark with cases JSON
+  CLI->>DB: Load indexed graph
+  CLI->>ENG: Evaluate expected vs actual impact
+  ENG-->>CLI: Case metrics plus summary
+  CLI-->>Dev: JSON output and optional saved file
+```
+
+Flow 3: agent runtime
+
+```mermaid
+sequenceDiagram
+  participant Agent as Copilot Agent
+  participant MCP as cgraph MCP server
+  participant DB as Graph DB
+
+  Agent->>MCP: cgraph_search or cgraph_node
+  MCP->>DB: Symbol lookup
+  DB-->>MCP: Location and relationship data
+  Agent->>MCP: cgraph_callers or cgraph_impact
+  MCP->>DB: Graph traversal
+  DB-->>MCP: Ranked affected nodes and files
+  MCP-->>Agent: Bounded context payload
+```
+
+## CLI and MCP
+
+### Most-used CLI commands
 
 Core:
 
-- `index [dir]` / `sync [dir]`
-- `search <query>`
-- `node <symbol>`
-- `callers <symbol>`
-- `callees <symbol>`
-- `trace <from> <to>`
-- `impact <symbol>`
-- `context <task>`
-- `explore <query>`
+- index [dir], sync [dir]
+- search <query>, node <symbol>
+- callers <symbol>, callees <symbol>
+- trace <from> <to>, impact <symbol>
+- context <task>, explore <query>
 
 Quality and architecture:
 
-- `deadcode`
-- `cycles`
-- `stats`
-- `suggest`
-- `lint`
-- `validate`
-- `dna`
+- deadcode, cycles, stats, suggest
+- lint, validate, dna
 
-Reliability and benchmarking:
+Reliability and benchmark:
 
-- `smoke`
-- `benchmark` (alias: `eval-impact`)
+- smoke
+- benchmark (alias: eval-impact)
 
-Infrastructure:
+Infra:
 
-- `status`
-- `files`
-- `changed`
-- `affected`
-- `export`
-- `watch [dir]`
-- `serve --mcp`
+- status, files, changed, affected, export, watch [dir], serve --mcp
 
-## MCP toolset (23 tools)
+### MCP tools (23)
 
-Discovery and lookup:
-
-- `cgraph_search`, `cgraph_node`, `cgraph_files`, `cgraph_status`
-
-Traversal and impact:
-
-- `cgraph_callers`, `cgraph_callees`, `cgraph_trace`, `cgraph_impact`, `cgraph_affected`, `cgraph_changed`
-
-Context and coding support:
-
-- `cgraph_context`, `cgraph_explore`, `cgraph_auto_context`, `cgraph_intent_search`
-
-Architecture and quality:
-
-- `cgraph_deadcode`, `cgraph_cycles`, `cgraph_stats`, `cgraph_suggest`, `cgraph_validate_plan`, `cgraph_lint`, `cgraph_dna`
-
-Utilities:
-
-- `cgraph_export`, `cgraph_retrieve_ccr`
-
-## Performance and outcome snapshot
-
-Recent workspace benchmark summary (from project scripts):
-
-- 145 calls and 291.5s without graph-native routing
-- 6 calls and 13.6s with cgraph
-- Approximate speedup: 21.4x
-
-Operational characteristics:
-
-- Low-latency query path via in-memory adjacency maps
-- Incremental indexing for changed files
-- Local-first architecture (no mandatory cloud dependency)
-
-## Architecture at a glance
-
-```text
-Codebase -> Parser/Indexer -> SQLite graph (.cgraph/graph.db)
-                                   |
-                             CLI + MCP server
-                                   |
-                      Agent/tool calls with bounded JSON
-```
-
-Key implementation areas:
-
-- `src/indexer.ts` for indexing and change detection
-- `src/graph.ts` for traversal, impact, analysis, suggestions
-- `src/cli.ts` for command workflows and benchmark/smoke flows
-- `src/mcp.ts` for MCP server tool surface
-- `src/storage.ts` for graph persistence and bulk map access
+- cgraph_search, cgraph_node, cgraph_files, cgraph_status
+- cgraph_callers, cgraph_callees, cgraph_trace, cgraph_impact, cgraph_affected, cgraph_changed
+- cgraph_context, cgraph_explore, cgraph_auto_context, cgraph_intent_search
+- cgraph_deadcode, cgraph_cycles, cgraph_stats, cgraph_suggest, cgraph_validate_plan, cgraph_lint, cgraph_dna
+- cgraph_export, cgraph_retrieve_ccr
 
 ## Development
 
@@ -208,7 +241,7 @@ npm run build
 npm test
 ```
 
-Focused checks:
+Focused verification:
 
 ```bash
 npm test -- __tests__/cli.test.ts __tests__/graph.test.ts
@@ -218,7 +251,7 @@ node ./bin/cgraph.js benchmark demo/impact-eval-cases.sample.json --dir demo/fin
 
 ## Configuration
 
-Optional `.cgraph.json` in project root:
+Optional .cgraph.json in project root:
 
 ```json
 {
@@ -229,99 +262,23 @@ Optional `.cgraph.json` in project root:
 }
 ```
 
-## Usage as a library
+## Use as a library
 
 ```ts
 import { GraphDB } from './src/storage';
 import { analyzeImpact } from './src/graph';
 
 const db = await GraphDB.open('.cgraph/graph.db');
-const result = analyzeImpact(db, 'createUser', { mode: 'decision', maxDepth: 3, maxNodes: 50, rootDir: process.cwd() });
+const result = analyzeImpact(db, 'createUser', {
+  mode: 'decision',
+  maxDepth: 3,
+  maxNodes: 50,
+  rootDir: process.cwd(),
+});
 console.log(result);
 db.close();
 ```
 
-## Architecture deep dive
-
-```mermaid
-flowchart LR
-  A[Repository files] --> B[Parser and Indexer]
-  B --> C[(.cgraph/graph.db)]
-  C --> D[Graph engine\ncallers/callees/impact/trace]
-  D --> E[CLI commands]
-  D --> F[MCP server tools]
-  E --> G[Terminal workflows]
-  F --> H[Copilot and agent workflows]
-```
-
-Core layers:
-
-- Ingestion layer: file walking, language parsing, symbol and edge extraction.
-- Storage layer: local SQLite graph with nodes, edges, and file metadata.
-- Analysis layer: traversal, impact heuristics, trace, dead code, cycles, and stats.
-- Interface layer: CLI commands and MCP tools for agent orchestration.
-
-## End-to-end flows
-
-### Flow 1: Index and query
-
-```mermaid
-sequenceDiagram
-  participant Dev as Developer/Agent
-  participant CLI as cgraph CLI
-  participant IDX as Indexer
-  participant DB as Graph DB
-
-  Dev->>CLI: cgraph index <repo>
-  CLI->>IDX: Parse files and extract graph
-  IDX->>DB: Upsert files/nodes/edges
-  Dev->>CLI: cgraph callers <symbol>
-  CLI->>DB: Read adjacency maps
-  DB-->>CLI: Structured graph answer
-  CLI-->>Dev: JSON output
-```
-
-### Flow 2: Change-risk evaluation
-
-```mermaid
-sequenceDiagram
-  participant Dev as Developer/Agent
-  participant CLI as cgraph benchmark
-  participant ENG as Impact engine
-  participant DB as Graph DB
-  participant REP as Report
-
-  Dev->>CLI: Run benchmark/eval-impact with cases JSON
-  CLI->>DB: Load indexed graph
-  CLI->>ENG: Evaluate expected vs actual impact sets
-  ENG->>REP: Compute per-case precision/recall
-  REP-->>CLI: Summary + case breakdown
-  CLI-->>Dev: JSON output and optional saved file
-```
-
-### Flow 3: Agent runtime with MCP
-
-```mermaid
-sequenceDiagram
-  participant Agent as Copilot Agent
-  participant MCP as cgraph MCP server
-  participant DB as Graph DB
-
-  Agent->>MCP: cgraph_search / cgraph_node
-  MCP->>DB: Symbol lookup
-  DB-->>MCP: Names, files, signatures
-  Agent->>MCP: cgraph_callers / cgraph_impact
-  MCP->>DB: Graph traversal
-  DB-->>MCP: Ranked affected nodes/files
-  MCP-->>Agent: Bounded context payload
-```
-
-Operational notes:
-
-- Smoke flow validates search, context, impact, and stats quickly in one command.
-- Benchmark flow validates impact quality on curated cases without forcing PR checks.
-- Incremental sync flow keeps graph freshness with reduced indexing cost.
-
 ## License
 
-AGPL-3.0. See `LICENSE`.
+AGPL-3.0. See LICENSE.
