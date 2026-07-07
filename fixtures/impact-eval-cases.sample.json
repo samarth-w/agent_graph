@@ -1,0 +1,14 @@
+[
+  {
+    "name": "guarded-call-site",
+    "target": "beta",
+    "expected_symbols": ["alpha"],
+    "mode": "decision"
+  },
+  {
+    "name": "direct-callee",
+    "target": "createUser",
+    "expected_symbols": ["saveUser"],
+    "mode": "discovery"
+  }
+]

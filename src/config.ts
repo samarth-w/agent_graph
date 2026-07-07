@@ -122,6 +122,15 @@ export function loadConfig(rootDir: string): GraphConfig {
         validSeverities.has(r.severity),
       ) as LintRule[];
     }
+    if (raw.gate && typeof raw.gate === 'object') {
+      const gate: Record<string, unknown> = raw.gate;
+      merged.gate = {};
+      if (typeof gate.maxCycles === 'number') merged.gate.maxCycles = gate.maxCycles;
+      if (typeof gate.maxDeadSymbols === 'number') merged.gate.maxDeadSymbols = gate.maxDeadSymbols;
+      if (typeof gate.minOverallHealth === 'number') merged.gate.minOverallHealth = gate.minOverallHealth;
+      if (typeof gate.maxRiskScore === 'number') merged.gate.maxRiskScore = gate.maxRiskScore;
+      if (typeof gate.requireAffectedTests === 'boolean') merged.gate.requireAffectedTests = gate.requireAffectedTests;
+    }
     return merged;
   } catch {
     return { ...DEFAULT_CONFIG };

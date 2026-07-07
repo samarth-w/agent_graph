@@ -11,7 +11,9 @@
     "dev": "tsc --watch",
     "start": "node bin/cgraph.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:performance": "node ./scripts/check-performance-budget.mjs",
+    "verify": "npm run build && npm test && npm run check:performance"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -20,7 +20,7 @@ cgraph precomputes repository structure and relationships so you can answer high
 
 ### Faster decisions
 
-- Ask once, get callers, callees, impact, trace, changed symbols, and affected tests.
+- Ask once, get callers, callees, impact, trace, changed symbols, affected tests, and PR-ready risk summaries.
 - Replace multi-step investigation loops with single graph-native queries.
 
 ### Better confidence
@@ -108,6 +108,29 @@ cgraph trace "router" "dbWrite" --pretty
 cgraph impact "createUser" --mode decision --pretty
 cgraph affected "src/services/user.ts" --pretty
 cgraph changed --pretty
+cgraph overview . --pretty
+```
+
+### 4. Build a PR decision summary in one command
+
+```bash
+cgraph pr-summary --dir . --pretty
+cgraph pr-summary --dir . --files src/cli.ts,src/mcp.ts --format markdown
+```
+
+### 5. Enforce merge gates with policy thresholds
+
+```bash
+cgraph gate --dir . --pretty
+cgraph gate --dir . --files src/cli.ts --max-cycles 2 --max-dead 50 --min-health 70 --max-risk 60
+```
+
+### 6. Track quality trend over time
+
+```bash
+cgraph baseline save sprint-24 --dir .
+cgraph baseline list --dir .
+cgraph trend --dir .
 ```
 
 ## Performance snapshot
@@ -212,7 +235,12 @@ Core:
 Quality and architecture:
 
 - deadcode, cycles, stats, suggest
-- lint, validate, dna
+- lint, validate, dna, overview
+
+PR and release quality:
+
+- pr-summary, gate
+- baseline save|list|compare, trend
 
 Reliability and benchmark:
 
@@ -223,6 +251,11 @@ Infra:
 
 - status, files, changed, affected, export, watch [dir], serve --mcp
 
+Output modes:
+
+- `--pretty` for human-readable JSON
+- `--format markdown` on overview/pr-summary/gate for PR-ready reports
+
 ### MCP tools (23)
 
 - cgraph_search, cgraph_node, cgraph_files, cgraph_status
@@ -230,6 +263,30 @@ Infra:
 - cgraph_context, cgraph_explore, cgraph_auto_context, cgraph_intent_search
 - cgraph_deadcode, cgraph_cycles, cgraph_stats, cgraph_suggest, cgraph_validate_plan, cgraph_lint, cgraph_dna
 - cgraph_export, cgraph_retrieve_ccr
+
+## Diagnostics and examples
+
+Inspect the local graph and repair orphan edges with the library helpers:
+
+```ts
+import { GraphDB, inspectDbHealth, repairDbHealth } from 'cgraph';
+
+const db = await GraphDB.open('./.cgraph/graph.db');
+const report = inspectDbHealth(db, process.cwd());
+if (!report.ok) {
+  const repaired = repairDbHealth(db, process.cwd());
+  console.log(`Repaired ${repaired.repaired_count} edge(s).`);
+}
+```
+
+Reference material and examples:
+
+- [docs/cli-usage.md](docs/cli-usage.md)
+- [docs/mcp-workflows.md](docs/mcp-workflows.md)
+- [docs/troubleshooting.md](docs/troubleshooting.md)
+- [examples/diagnostics-repair.ts](examples/diagnostics-repair.ts)
+- [fixtures/impact-eval-cases.sample.json](fixtures/impact-eval-cases.sample.json)
+- [fixtures/performance-budget.json](fixtures/performance-budget.json)
 
 ## Development
 
@@ -258,7 +315,14 @@ Optional .cgraph.json in project root:
   "maxDepth": 5,
   "maxNodes": 100,
   "ignorePaths": ["vendor", "generated"],
-  "extensions": [".ts", ".tsx", ".py"]
+  "extensions": [".ts", ".tsx", ".py"],
+  "gate": {
+    "maxCycles": 2,
+    "maxDeadSymbols": 50,
+    "minOverallHealth": 70,
+    "maxRiskScore": 60,
+    "requireAffectedTests": false
+  }
 }
 ```
 

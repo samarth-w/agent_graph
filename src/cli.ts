@@ -11,7 +11,6 @@ import fs from 'fs';
 import { GraphDB } from './storage';
 import { indexProject } from './indexer';
 import { findCallers, findCallees, analyzeImpact, evaluateImpactCases, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected, findDeadCode, findCycles, getProjectStats, suggestRefactorings, getAutoContext, validatePlan, getCodebaseDNA } from './graph';
-import type { ImpactEvaluationCase } from './types';
 import { searchSymbols, intentSearch } from './search';
 import { buildContext, explore } from './context';
 import { getDbPath, DEFAULT_CONFIG, loadConfig } from './config';
@@ -21,12 +20,20 @@ import { toMermaid, toDot, toHtml } from './export';
 import { findChangedSymbols, getChangedFiles } from './git';
 import { startMcpServer } from './mcp';
 import { FileWatcher } from './watcher';
+import { evaluateImpactCasesFromFile, runCapabilitySmokeCheck } from './cli/impact';
+import { saveBaseline, listBaselines, compareBaselines, getTrend } from './baseline';
+import { buildPrSummary } from './cli/pr-summary';
+import { evaluateGate } from './cli/gate';
+import { formatGateMarkdown, formatOverviewMarkdown, formatPrSummaryMarkdown } from './cli/formatters';
+
+export * from './cli/diagnostics';
+export * from './cli/impact';
 
 const pkg = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'),
 );
 
-const program = new Command();
+export const program = new Command();
 
 program
   .name('cgraph')
@@ -41,127 +48,12 @@ function out(data: unknown, pretty?: boolean): void {
   process.stdout.write(json + '\n');
 }
 
+function withProjectRootOption(command: Command): Command {
+  return command.option('-d, --dir <path>', 'project root directory');
+}
+
 function resolveRoot(dir?: string): string {
   return path.resolve(dir ?? process.cwd());
-}
-
-export interface CapabilitySmokeCheck {
-  name: string;
-  status: 'ok' | 'failed';
-  detail: string;
-}
-
-export interface CapabilitySmokeReport {
-  root_dir: string;
-  target_symbol: string;
-  ok: boolean;
-  passed: number;
-  failed: number;
-  checks: CapabilitySmokeCheck[];
-}
-
-export function loadImpactEvaluationCasesFromFile(filePath: string): ImpactEvaluationCase[] {
-  const resolvedPath = path.resolve(filePath);
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Impact evaluation cases file not found: ${resolvedPath}`);
-  }
-
-  const raw = fs.readFileSync(resolvedPath, 'utf-8');
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
-    throw new Error('Impact evaluation cases file must contain a JSON array.');
-  }
-
-  return parsed.map((entry, idx) => {
-    if (!entry || typeof entry !== 'object') {
-      throw new Error(`Case at index ${idx} must be an object.`);
-    }
-    const item = entry as Record<string, unknown>;
-    const name = typeof item.name === 'string' ? item.name : `case-${idx + 1}`;
-    const target = typeof item.target === 'string' ? item.target : '';
-    const expectedSymbols = Array.isArray(item.expected_symbols)
-      ? item.expected_symbols.filter((v): v is string => typeof v === 'string')
-      : [];
-    const mode = item.mode === 'decision' ? 'decision' : 'discovery';
-    if (!target) {
-      throw new Error(`Case at index ${idx} is missing a non-empty target.`);
-    }
-    return { name, target, expected_symbols: expectedSymbols, mode };
-  });
-}
-
-export function evaluateImpactCasesFromFile(
-  db: GraphDB,
-  rootDir: string,
-  filePath: string,
-  opts: { maxDepth?: number; maxNodes?: number } = {},
-) {
-  const cases = loadImpactEvaluationCasesFromFile(filePath);
-  return evaluateImpactCases(db, rootDir, cases, opts);
-}
-
-export async function runCapabilitySmokeCheck(
-  db: GraphDB,
-  rootDir: string,
-  opts: { targetSymbol?: string; maxDepth?: number; maxNodes?: number } = {},
-): Promise<CapabilitySmokeReport> {
-  const targetSymbol = opts.targetSymbol ?? 'main';
-  const checks: CapabilitySmokeCheck[] = [];
-  const push = (name: string, status: 'ok' | 'failed', detail: string) => {
-    checks.push({ name, status, detail });
-  };
-
-  try {
-    const results = searchSymbols(db, targetSymbol, { limit: 5 });
-    push('search', 'ok', `${results.length} result(s)`);
-  } catch (err: any) {
-    push('search', 'failed', err.message);
-  }
-
-  try {
-    const payload = buildContext(db, rootDir, targetSymbol);
-    push('context', 'ok', `${payload.nodes.length} node(s), ${payload.snippets.length} snippet(s)`);
-  } catch (err: any) {
-    push('context', 'failed', err.message);
-  }
-
-  try {
-    const result = analyzeImpact(db, targetSymbol, {
-      maxDepth: opts.maxDepth ?? 2,
-      maxNodes: opts.maxNodes ?? 10,
-      rootDir,
-      mode: 'discovery',
-    });
-    const impactedCount = Array.isArray((result as any).impacted_nodes)
-      ? (result as any).impacted_nodes.length
-      : 0;
-    push('impact', 'ok', `${impactedCount} impacted node(s)`);
-  } catch (err: any) {
-    push('impact', 'failed', err.message);
-  }
-
-  try {
-    const stats = getProjectStats(db) as any;
-    const indexedNodes = typeof stats?.total_nodes === 'number'
-      ? stats.total_nodes
-      : (typeof stats?.nodes_total === 'number'
-        ? stats.nodes_total
-        : (typeof stats?.nodes === 'number' ? stats.nodes : 0));
-    push('stats', 'ok', `${indexedNodes} indexed node(s)`);
-  } catch (err: any) {
-    push('stats', 'failed', err.message);
-  }
-
-  const passed = checks.filter(check => check.status === 'ok').length;
-  const failed = checks.length - passed;
-  return {
-    root_dir: rootDir,
-    target_symbol: targetSymbol,
-    ok: failed === 0,
-    passed,
-    failed,
-    checks,
-  };
 }
 
 async function openDb(rootDir: string): Promise<GraphDB> {
@@ -243,17 +135,17 @@ program
   });
 
 // ── cgraph search ───────────────────────────────────────────────
-program
-  .command('search')
+withProjectRootOption(program
+  .command('search'))
   .description('Search for symbols by name or text')
   .argument('<query>', 'search query')
+  .argument('[dir]', 'project root directory', '.')
   .option('-n, --limit <n>', 'max results', '20')
   .option('-k, --kind <kind>', 'filter by kind (function, class, method, ...)')
   .option('-f, --file <path>', 'scope to a specific file')
   .option('--pretty', 'pretty-print JSON output')
-  .option('[dir]') // silently accept dir
-  .action(async (query: string, opts: any) => {
-    const root = resolveRoot(opts.dir);
+  .action(async (query: string, dir: string, opts: any) => {
+    const root = resolveRoot(opts.dir ?? dir);
     const db = await openDb(root);
     try {
       const results = searchSymbols(db, query, {
@@ -281,15 +173,15 @@ program
   });
 
 // ── cgraph callers ──────────────────────────────────────────────
-program
-  .command('callers')
+withProjectRootOption(program
+  .command('callers'))
   .description('Find all callers of a symbol')
   .argument('<symbol>', 'symbol name')
   .option('--depth <n>', 'max traversal depth')
   .option('--limit <n>', 'max nodes')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (symbol: string, opts: any) => {
-    const root = resolveRoot();
+    const root = resolveRoot(opts.dir);
     const db = await openDb(root);
     try {
       const adaptive = computeLimits(db, 'callers', {
@@ -361,15 +253,15 @@ program
   });
 
 // ── cgraph impact ───────────────────────────────────────────────
-program
-  .command('impact')
+withProjectRootOption(program
+  .command('impact'))
   .description('Analyze impact of changing a file or symbol')
   .argument('<target>', 'symbol name or file path')
   .option('--depth <n>', 'max traversal depth')
   .option('--limit <n>', 'max nodes')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (target: string, opts: any) => {
-    const root = resolveRoot();
+    const root = resolveRoot(opts.dir);
     const db = await openDb(root);
     try {
       const adaptive = computeLimits(db, 'impact', {
@@ -490,8 +382,8 @@ program
   });
 
 // ── cgraph context ──────────────────────────────────────────────
-program
-  .command('context')
+withProjectRootOption(program
+  .command('context'))
   .description('Build minimal context payload for a task')
   .argument('<task>', 'task description (natural language)')
   .option('--depth <n>', 'max expansion depth')
@@ -499,7 +391,7 @@ program
   .option('--snippets <n>', 'max snippets', '20')
   .option('--pretty', 'pretty-print JSON output')
   .action(async (task: string, opts: any) => {
-    const root = resolveRoot();
+    const root = resolveRoot(opts.dir);
     const db = await openDb(root);
     try {
       const adaptive = computeLimits(db, 'context', {
@@ -727,6 +619,102 @@ program
         total: symbols.length,
         changed_files: getChangedFiles(root, { ref: opts.ref, staged: opts.staged }),
       }, opts.pretty);
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph pr-summary ──────────────────────────────────────────
+program
+  .command('pr-summary')
+  .description('Build a pull-request risk summary from changed files, impact, and affected tests')
+  .option('--dir <path>', 'project root directory')
+  .option('--files <paths>', 'comma-separated changed file paths (overrides git diff detection)')
+  .option('--ref <ref>', 'git ref to diff against', 'HEAD')
+  .option('--staged', 'only inspect staged changes')
+  .option('--depth <n>', 'max traversal depth', '4')
+  .option('--limit <n>', 'max impacted nodes per changed symbol', '80')
+  .option('--mode <mode>', 'impact mode (discovery|decision)', 'decision')
+  .option('--filter <glob>', 'custom glob to identify test files')
+  .option('--format <fmt>', 'output format (json|markdown)', 'json')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: any) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      const files = typeof opts.files === 'string'
+        ? opts.files.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+        : undefined;
+      const summary = buildPrSummary(db, root, {
+        files,
+        ref: opts.ref,
+        staged: opts.staged === true,
+        depth: parseInt(opts.depth, 10),
+        maxNodes: parseInt(opts.limit, 10),
+        mode: opts.mode === 'discovery' ? 'discovery' : 'decision',
+        testPattern: opts.filter,
+      });
+      if (opts.format === 'markdown') {
+        process.stdout.write(formatPrSummaryMarkdown(summary) + '\n');
+      } else {
+        out(summary, opts.pretty);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph gate ───────────────────────────────────────────────
+program
+  .command('gate')
+  .description('Enforce quality thresholds using architecture and PR-risk checks')
+  .option('--dir <path>', 'project root directory')
+  .option('--files <paths>', 'comma-separated changed file paths (overrides git diff detection)')
+  .option('--ref <ref>', 'git ref to diff against', 'HEAD')
+  .option('--staged', 'only inspect staged changes')
+  .option('--depth <n>', 'max traversal depth', '4')
+  .option('--limit <n>', 'max impacted nodes per changed symbol', '80')
+  .option('--mode <mode>', 'impact mode (discovery|decision)', 'decision')
+  .option('--filter <glob>', 'custom glob to identify test files')
+  .option('--max-cycles <n>', 'gate threshold: max allowed cycles')
+  .option('--max-dead <n>', 'gate threshold: max allowed dead symbols')
+  .option('--min-health <n>', 'gate threshold: minimum overall health score')
+  .option('--max-risk <n>', 'gate threshold: max allowed PR risk score')
+  .option('--require-tests', 'require at least one affected test')
+  .option('--format <fmt>', 'output format (json|markdown)', 'json')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: any) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      const config = loadConfig(root);
+      const files = typeof opts.files === 'string'
+        ? opts.files.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0)
+        : undefined;
+
+      const result = evaluateGate(db, root, {
+        config: config.gate,
+        files,
+        ref: opts.ref,
+        staged: opts.staged === true,
+        depth: parseInt(opts.depth, 10),
+        maxNodes: parseInt(opts.limit, 10),
+        mode: opts.mode === 'discovery' ? 'discovery' : 'decision',
+        testPattern: opts.filter,
+        maxCycles: typeof opts.maxCycles === 'string' ? parseInt(opts.maxCycles, 10) : undefined,
+        maxDeadSymbols: typeof opts.maxDead === 'string' ? parseInt(opts.maxDead, 10) : undefined,
+        minOverallHealth: typeof opts.minHealth === 'string' ? parseInt(opts.minHealth, 10) : undefined,
+        maxRiskScore: typeof opts.maxRisk === 'string' ? parseInt(opts.maxRisk, 10) : undefined,
+        requireAffectedTests: opts.requireTests === true ? true : undefined,
+      });
+
+      if (opts.format === 'markdown') {
+        process.stdout.write(formatGateMarkdown(result) + '\n');
+      } else {
+        out(result, opts.pretty);
+      }
+
+      if (!result.passed) process.exit(1);
     } finally {
       db.close();
     }
@@ -980,6 +968,113 @@ program
       const result = getCodebaseDNA(db);
       if (opts.json) { out(result); } else { out(result, true); }
     } finally { db.close(); }
+  });
+
+// ── cgraph overview ────────────────────────────────────────────
+withProjectRootOption(program
+  .command('overview'))
+  .description('Summarize the indexed codebase with health, hotspots, and architecture signals')
+  .argument('[dir]', 'project root directory', '.')
+  .option('--limit <n>', 'max hotspots to include', '10')
+  .option('--format <fmt>', 'output format (json|markdown)', 'json')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (dir: string, opts: any) => {
+    const root = resolveRoot(opts.dir ?? dir);
+    const db = await openDb(root);
+    try {
+      const dna = getCodebaseDNA(db);
+      const stats = getProjectStats(db, { limit: parseInt(opts.limit ?? '10', 10) });
+      const payload = {
+        root_dir: root,
+        summary: {
+          total_files: stats.total_files,
+          total_nodes: stats.total_nodes,
+          total_edges: stats.total_edges,
+          avg_fan_in: stats.avg_fan_in,
+          avg_fan_out: stats.avg_fan_out,
+        },
+        health: dna.health,
+        architecture: {
+          style: dna.architecture_style,
+          languages: dna.languages,
+          roles: dna.role_distribution,
+        },
+        hotspots: stats.hotspots,
+      };
+      if (opts.format === 'markdown') {
+        process.stdout.write(formatOverviewMarkdown(payload) + '\n');
+      } else {
+        out(payload, opts.pretty);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+// ── cgraph baseline ───────────────────────────────────────────
+const baselineCommand = program
+  .command('baseline')
+  .description('Save, list, and compare project health snapshots');
+
+baselineCommand
+  .command('save')
+  .description('Save a health snapshot for the current project')
+  .argument('[label]', 'snapshot label')
+  .option('--dir <path>', 'project root directory')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (label: string | undefined, opts: any) => {
+    const root = resolveRoot(opts.dir);
+    try {
+      const result = await saveBaseline(root, label ?? '');
+      out(result, opts.pretty);
+    } catch (err: any) {
+      out({ error: err.message }, opts.pretty);
+      process.exit(1);
+    }
+  });
+
+baselineCommand
+  .command('list')
+  .description('List saved health snapshots')
+  .option('--dir <path>', 'project root directory')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: any) => {
+    const root = resolveRoot(opts.dir);
+    out(listBaselines(root), opts.pretty);
+  });
+
+baselineCommand
+  .command('compare')
+  .description('Compare two saved health snapshots')
+  .argument('<from>', 'first snapshot label')
+  .argument('<to>', 'second snapshot label')
+  .option('--dir <path>', 'project root directory')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (from: string, to: string, opts: any) => {
+    const root = resolveRoot(opts.dir);
+    try {
+      const result = compareBaselines(root, from, to);
+      out(result, opts.pretty);
+    } catch (err: any) {
+      out({ error: err.message }, opts.pretty);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('trend')
+  .description('Compare the current codebase health with the latest saved baseline')
+  .option('--dir <path>', 'project root directory')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: any) => {
+    const root = resolveRoot(opts.dir);
+    try {
+      const result = await getTrend(root);
+      out(result, opts.pretty);
+    } catch (err: any) {
+      out({ error: err.message }, opts.pretty);
+      process.exit(1);
+    }
   });
 
 // ── cgraph serve --mcp ──────────────────────────────────────────

@@ -330,7 +330,7 @@ const TOOLS: McpToolDef[] = [
 ];
 
 // ─── Tool handler ──────────────────────────────────────────────
-class ToolHandler {
+export class ToolHandler {
   private db: GraphDB | null = null;
   private syncing = false;
   private cache = new LRUCache<McpToolResult>(64, 30_000);

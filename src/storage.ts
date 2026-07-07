@@ -369,6 +369,10 @@ export class GraphDB {
     }
   }
 
+  deleteEdge(edgeId: number): void {
+    this.run('DELETE FROM edges WHERE id = ?', [edgeId]);
+  }
+
   clearAllEdges(): void {
     this.run('DELETE FROM edges');
   }

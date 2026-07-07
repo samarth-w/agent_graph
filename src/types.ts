@@ -256,6 +256,15 @@ export interface GraphConfig {
   ignorePaths: string[];
   extensions: string[];
   rules?: LintRule[];
+  gate?: GateConfig;
+}
+
+export interface GateConfig {
+  maxCycles?: number;
+  maxDeadSymbols?: number;
+  minOverallHealth?: number;
+  maxRiskScore?: number;
+  requireAffectedTests?: boolean;
 }
 
 // ─── Trace (path finding) ──────────────────────────────────────

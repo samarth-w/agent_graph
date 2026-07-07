@@ -1,0 +1,6 @@
+{
+  "maxNodes": 100,
+  "maxDepth": 5,
+  "durationMs": 5000,
+  "passRate": 0.8
+}

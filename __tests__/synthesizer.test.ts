@@ -2,7 +2,7 @@
  * Synthesizer Tests — dynamic dispatch edge synthesis.
  */
 import { describe, it, expect } from 'vitest';
-import { synthesizeEdges } from '../src/synthesizer';
+import { synthesizeEdges, detectJsxRendering } from '../src/synthesizer';
 import type { ParsedCall } from '../src/types';
 
 function makeCall(callee: string, receiver?: string, line = 1, enclosingSymbol?: string): ParsedCall {
@@ -70,6 +70,52 @@ describe('No Synthesis Needed', () => {
 
   it('returns empty for empty call list', () => {
     const edges = synthesizeEdges([], 'src/empty.ts');
+    expect(edges).toEqual([]);
+  });
+});
+
+describe('detectJsxRendering', () => {
+  it('returns empty when there is no enclosing component', () => {
+    const edges = detectJsxRendering('<Foo />', 'src/App.tsx', null);
+    expect(edges).toEqual([]);
+  });
+
+  it('detects a single JSX component render', () => {
+    const content = 'function App() {\n  return <Header />;\n}\n';
+    const edges = detectJsxRendering(content, 'src/App.tsx', 'App');
+
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      sourceQName: 'src/App.tsx::App',
+      targetName: 'Header',
+      kind: 'calls',
+      provenance: 'heuristic',
+      metadata: { synthesizedBy: 'jsx-render', via: 'Header' },
+    });
+    expect(edges[0].line).toBe(2);
+  });
+
+  it('detects multiple distinct JSX components and dedupes repeats', () => {
+    const content = [
+      'function App() {',
+      '  return (',
+      '    <Layout>',
+      '      <Header />',
+      '      <Sidebar />',
+      '      <Header />',
+      '    </Layout>',
+      '  );',
+      '}',
+    ].join('\n');
+
+    const edges = detectJsxRendering(content, 'src/App.tsx', 'App');
+    const names = edges.map(e => e.targetName).sort();
+    expect(names).toEqual(['Header', 'Layout', 'Sidebar']);
+  });
+
+  it('ignores lowercase JSX-like tags (native DOM elements)', () => {
+    const content = 'function App() {\n  return <div><span /></div>;\n}\n';
+    const edges = detectJsxRendering(content, 'src/App.tsx', 'App');
     expect(edges).toEqual([]);
   });
 });

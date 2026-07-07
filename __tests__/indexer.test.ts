@@ -57,4 +57,15 @@ describe('indexProject', () => {
     const forced = await indexProject(tempDir, { force: true });
     expect(forced.files_changed).toBeGreaterThanOrEqual(1);
   });
+
+  it('uses the parallel parse path for large batches (>= worker threshold)', async () => {
+    // WORKER_THRESHOLD in src/indexer.ts is 8 — write more files than that
+    // so executeParsePhase routes through parseFilesParallel.
+    for (let i = 0; i < 10; i++) {
+      writeFile(`src/batch${i}.ts`, `export function batch${i}() { return ${i}; }\n`);
+    }
+    const result = await indexProject(tempDir, { force: true });
+    expect(result.files_changed).toBeGreaterThanOrEqual(10);
+    expect(result.nodes_total).toBeGreaterThanOrEqual(10);
+  });
 });

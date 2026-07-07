@@ -47,4 +47,41 @@ describe('FileWatcher', () => {
     expect(w).toBeDefined();
     w.stop();
   });
+
+  it('detects a source file change and triggers onSync after the debounce window', async () => {
+    let syncResult: { files_changed: number; duration_ms: number } | null = null;
+    const w = new FileWatcher(tempDir, {
+      debounceMs: 100,
+      onSync: (result) => { syncResult = result; },
+      onError: () => {},
+    });
+    w.start();
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      fs.writeFileSync(path.join(tempDir, 'src', 'seed.ts'), 'export function seed() { return 2; }\n');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      expect(syncResult).not.toBeNull();
+      expect(syncResult!.files_changed).toBeGreaterThanOrEqual(1);
+    } finally {
+      w.stop();
+    }
+  }, 10_000);
+
+  it('does not trigger onSync for changes after stop() is called', async () => {
+    let syncCount = 0;
+    const w = new FileWatcher(tempDir, {
+      debounceMs: 100,
+      onSync: () => { syncCount++; },
+      onError: () => {},
+    });
+    w.start();
+    w.stop();
+
+    fs.writeFileSync(path.join(tempDir, 'src', 'seed.ts'), 'export function seed() { return 3; }\n');
+    await new Promise(resolve => setTimeout(resolve, 400));
+
+    expect(syncCount).toBe(0);
+  }, 10_000);
 });
