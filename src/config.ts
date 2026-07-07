@@ -131,6 +131,15 @@ export function loadConfig(rootDir: string): GraphConfig {
       if (typeof gate.maxRiskScore === 'number') merged.gate.maxRiskScore = gate.maxRiskScore;
       if (typeof gate.requireAffectedTests === 'boolean') merged.gate.requireAffectedTests = gate.requireAffectedTests;
     }
+    if (raw.a2a && typeof raw.a2a === 'object') {
+      const a2a: Record<string, unknown> = raw.a2a;
+      merged.a2a = {};
+      if (a2a.trustMode === 'registration_only' || a2a.trustMode === 'per_write') {
+        merged.a2a.trustMode = a2a.trustMode;
+      }
+      if (typeof a2a.maxVerifyLatencyMs === 'number') merged.a2a.maxVerifyLatencyMs = a2a.maxVerifyLatencyMs;
+      if (typeof a2a.allowVerifyFallback === 'boolean') merged.a2a.allowVerifyFallback = a2a.allowVerifyFallback;
+    }
     return merged;
   } catch {
     return { ...DEFAULT_CONFIG };

@@ -92,6 +92,37 @@ describe('GraphDB', () => {
       expect(edges.length).toBe(1);
       expect(edges[0].source_id).toBe(id1);
     });
+
+    it('should default edge cost fields when not provided', () => {
+      const fileId = db.upsertFile('src/cost.ts', 'hash-c1', 'typescript', 50, 1000).id;
+      const id1 = db.insertNode(fileId, 'producer', 'src/cost.ts::producer', 'function', 1, 2, null, null, true);
+      const id2 = db.insertNode(fileId, 'consumer', 'src/cost.ts::consumer', 'function', 3, 4, null, null, true);
+      db.insertEdge(id1, id2, 'calls');
+
+      const edge = db.getEdgesFrom(id1, 'calls')[0] as any;
+      expect(edge.tokens_in).toBe(0);
+      expect(edge.tokens_out).toBe(0);
+      expect(edge.latency_ms).toBe(0);
+      expect(edge.est_cost_usd).toBe(0);
+    });
+
+    it('should persist provided edge cost fields', () => {
+      const fileId = db.upsertFile('src/cost.ts', 'hash-c2', 'typescript', 50, 1000).id;
+      const id1 = db.insertNode(fileId, 'producer', 'src/cost.ts::producer', 'function', 1, 2, null, null, true);
+      const id2 = db.insertNode(fileId, 'consumer', 'src/cost.ts::consumer', 'function', 3, 4, null, null, true);
+      db.insertEdge(id1, id2, 'calls', {
+        tokens_in: 120,
+        tokens_out: 44,
+        latency_ms: 980,
+        est_cost_usd: 0.0042,
+      });
+
+      const edge = db.getEdgesFrom(id1, 'calls')[0] as any;
+      expect(edge.tokens_in).toBe(120);
+      expect(edge.tokens_out).toBe(44);
+      expect(edge.latency_ms).toBe(980);
+      expect(edge.est_cost_usd).toBe(0.0042);
+    });
   });
 
   describe('FTS Search', () => {

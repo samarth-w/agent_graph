@@ -13,6 +13,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:performance": "node ./scripts/check-performance-budget.mjs",
+    "benchmark:a2a": "node ./scripts/benchmark-a2a-multihop.mjs",
+    "benchmark:a2a:baseline": "node ./scripts/benchmark-a2a-multihop.mjs 25 --save reports/a2a-baseline.json",
+    "benchmark:a2a:compare": "node ./scripts/benchmark-a2a-multihop.mjs 25 --compare reports/a2a-baseline.json --save reports/a2a-current.json",
+    "benchmark:a2a:gate": "node ./scripts/benchmark-a2a-multihop.mjs 25 --compare reports/a2a-baseline.json --save reports/a2a-current.json --budget fixtures/a2a-benchmark-budget.json --enforce",
+    "benchmark:a2a:gate:local": "node ./scripts/benchmark-a2a-multihop.mjs 15 --compare reports/a2a-baseline.json --save reports/a2a-current.json --budget fixtures/a2a-benchmark-budget.local.json --enforce",
     "verify": "npm run build && npm test && npm run check:performance"
   },
   "engines": {

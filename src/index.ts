@@ -13,6 +13,7 @@ export { searchSymbols } from './search';
 export { parseQuery } from './query-parser';
 export { buildContext, explore } from './context';
 export { startMcpServer } from './mcp';
+export { getAgentCard, handleA2ARpcRequest, startA2AServer } from './a2a';
 export { FileWatcher } from './watcher';
 export { extractRoutes } from './frameworks';
 export { synthesizeEdges } from './synthesizer';

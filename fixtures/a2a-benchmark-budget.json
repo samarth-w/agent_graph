@@ -1,0 +1,9 @@
+{
+  "minRootCauseAccuracy": 0.95,
+  "minAgentSpeedup": 2,
+  "maxGraphRpcCalls": 1,
+  "maxGraphAvgTimeMs": 90,
+  "maxGraphTimeRegressionPct": 50,
+  "minConflictResolutionAccuracy": 0.9,
+  "minCostVisibilityCoverage": 0.9
+}

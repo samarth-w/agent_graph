@@ -27,6 +27,7 @@ export type EdgeKind =
   | 'contains'
   | 'exports'
   | 'references'
+  | 'authored'
   | 'instantiates'
   | 'decorates';
 
@@ -68,6 +69,17 @@ export interface EdgeRecord {
   source_id: number;
   target_id: number;
   kind: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  latency_ms?: number;
+  est_cost_usd?: number;
+}
+
+export interface EdgeCost {
+  tokens_in?: number;
+  tokens_out?: number;
+  latency_ms?: number;
+  est_cost_usd?: number;
 }
 
 // ─── Parser output types ───────────────────────────────────────
@@ -257,6 +269,13 @@ export interface GraphConfig {
   extensions: string[];
   rules?: LintRule[];
   gate?: GateConfig;
+  a2a?: A2AConfig;
+}
+
+export interface A2AConfig {
+  trustMode?: 'registration_only' | 'per_write';
+  maxVerifyLatencyMs?: number;
+  allowVerifyFallback?: boolean;
 }
 
 export interface GateConfig {
@@ -368,6 +387,28 @@ export interface McpToolDef {
 export interface McpToolResult {
   content: Array<{ type: 'text'; text: string }>;
   isError?: boolean;
+}
+
+// ─── A2A adapter types ─────────────────────────────────────────
+export interface A2AAgentCard {
+  name: string;
+  version: string;
+  transport: 'http+jsonrpc';
+  capabilities: Array<{ name: string; implemented: boolean; description: string }>;
+}
+
+export interface A2ARpcRequest {
+  jsonrpc: '2.0';
+  id?: string | number | null;
+  method: string;
+  params?: Record<string, unknown>;
+}
+
+export interface A2ARpcResponse {
+  jsonrpc: '2.0';
+  id: string | number | null;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
 }
 
 // ─── Parsed search query (field-qualified) ─────────────────────

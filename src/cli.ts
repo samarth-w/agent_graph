@@ -19,6 +19,7 @@ import { computeLimits } from './adaptive';
 import { toMermaid, toDot, toHtml } from './export';
 import { findChangedSymbols, getChangedFiles } from './git';
 import { startMcpServer } from './mcp';
+import { startA2AServer } from './a2a';
 import { FileWatcher } from './watcher';
 import { evaluateImpactCasesFromFile, runCapabilitySmokeCheck } from './cli/impact';
 import { saveBaseline, listBaselines, compareBaselines, getTrend } from './baseline';
@@ -1080,16 +1081,29 @@ program
 // ── cgraph serve --mcp ──────────────────────────────────────────
 program
   .command('serve')
-  .description('Start MCP server for AI agent integration')
+  .description('Start MCP or A2A server for agent integration')
   .option('--mcp', 'start as MCP server (stdio JSON-RPC)')
+  .option('--a2a', 'start as A2A HTTP/JSON-RPC server')
   .option('--path <dir>', 'project root directory')
+  .option('--port <n>', 'A2A server port', '7071')
   .action(async (opts: any) => {
-    if (!opts.mcp) {
-      console.error('Use --mcp flag to start MCP server. Example: cgraph serve --mcp');
+    if (opts.mcp && opts.a2a) {
+      console.error('Choose one server mode at a time: --mcp or --a2a');
       process.exit(1);
     }
+
     const root = resolveRoot(opts.path);
-    startMcpServer(root);
+    if (opts.mcp) {
+      startMcpServer(root);
+      return;
+    }
+    if (opts.a2a) {
+      startA2AServer(root, { port: parseInt(opts.port, 10) });
+      return;
+    }
+
+    console.error('Use --mcp or --a2a. Example: cgraph serve --a2a --port 7071');
+    process.exit(1);
   });
 
 // ── cgraph watch ────────────────────────────────────────────────

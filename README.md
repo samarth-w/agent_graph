@@ -2,39 +2,50 @@
 
 # cgraph
 
-### Code intelligence that feels instant.
+### Code intelligence at graph speed.
 
-Turn any codebase into a queryable graph so developers and AI agents can move from question to decision in one step.
+Turn any repository into a queryable knowledge graph so engineers and AI agents can move from question to decision in one hop.
 
-[Why it wins](#why-cgraph-wins) · [Quick start](#quick-start) · [Core workflows](#core-workflows) · [Architecture](#architecture) · [CLI and MCP](#cli-and-mcp)
+[Quick Start](#quick-start) · [Tool Compartments](#tool-compartments) · [A2A API](#a2a-api-workflow) · [Architecture](#architecture) · [Development](#development)
 
 </div>
 
 ---
 
-## The one-line pitch
+## Why cgraph
 
-cgraph precomputes repository structure and relationships so you can answer high-value engineering questions without grep chains, file hopping, or context sprawl.
+cgraph precomputes symbols, relationships, and usage paths so high-value questions become direct queries instead of multi-step grep loops.
 
-## Why cgraph wins
+What this unlocks:
 
-### Faster decisions
+- Faster investigation: callers, callees, traces, and impact in one pass.
+- Better merge confidence: risk summaries, quality gates, and affected-test visibility.
+- Agent-native workflows: MCP tools and A2A adapter for reliable runtime integration.
 
-- Ask once, get callers, callees, impact, trace, changed symbols, affected tests, and PR-ready risk summaries.
-- Replace multi-step investigation loops with single graph-native queries.
+## How cgraph Actually Runs
 
-### Better confidence
+### CLI Execution Path
 
-- Impact output includes evidence-aware reasoning.
-- Optional benchmark suites report precision and recall for impact quality.
+1. CLI commands enter through `src/cli.ts`.
+2. Commands open graph storage through `GraphDB` in `src/storage.ts`.
+3. Indexing commands call `indexProject` in `src/indexer.ts`.
+4. Query and analysis commands call graph/search/context modules in `src/graph.ts`, `src/search.ts`, and `src/context.ts`.
 
-### Built for real workflows
+### MCP Execution Path
 
-- Local-first architecture with low-latency responses.
-- Incremental indexing and watch mode for day-to-day development.
-- CLI plus MCP tools for terminal, CI, and agent runtime usage.
+1. MCP server starts from `startMcpServer` in `src/mcp.ts`.
+2. A `ToolHandler` dispatches each `cgraph_*` method to a specific handler.
+3. Handlers resolve or build DB state (`getDb`), then run graph/search/analysis operations.
+4. Results are returned as JSON-RPC payloads, with optional compression/CCR retrieval.
 
-## Quick start
+### A2A Execution Path
+
+1. A2A server starts from `startA2AServer` in `src/a2a.ts`.
+2. HTTP JSON-RPC requests flow through `handleA2ARpcRequest`.
+3. Methods `register_agent`, `write_node`, `query_by_agent`, and `read_lineage` are validated and executed against `GraphDB`.
+4. Trust policy is resolved from config and request context before writes.
+
+## Quick Start
 
 ### Install
 
@@ -60,7 +71,7 @@ npm run build
 npm link
 ```
 
-### First 3 commands
+### First Three Commands
 
 ```bash
 cgraph index .
@@ -68,88 +79,235 @@ cgraph status . --pretty
 cgraph smoke --dir demo/finance --target createUser --pretty
 ```
 
-## Core workflows
+## Tool Compartments
 
-### 1. Validate the stack in one shot
+This project is intentionally organized into operational compartments so teams can adopt it by workflow.
 
-Smoke checks verify search, context, impact, and stats in one command.
+### 1) CLI Navigation Tools
 
-```bash
-cgraph smoke --dir demo/finance --target createUser --pretty
-```
+Use these when you need fast repository understanding in terminal workflows.
 
-### 2. Benchmark impact quality on demand
+- `search`, `node`, `files`, `status`
+- `callers`, `callees`, `trace`, `impact`, `affected`, `changed`
+- `context`, `explore`
 
-Run curated impact cases without forcing checks on every PR.
-
-```bash
-cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --pretty
-```
-
-Alias:
-
-```bash
-cgraph eval-impact demo/impact-eval-cases.sample.json --dir demo/finance --pretty
-```
-
-Save a report artifact:
-
-```bash
-cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --save reports/impact-summary.json --pretty
-```
-
-### 3. Solve common engineering questions fast
+Typical loop:
 
 ```bash
 cgraph search "handleRequest" --pretty
 cgraph callers "handleRequest" --pretty
-cgraph callees "handleRequest" --pretty
-cgraph trace "router" "dbWrite" --pretty
-cgraph impact "createUser" --mode decision --pretty
-cgraph affected "src/services/user.ts" --pretty
-cgraph changed --pretty
-cgraph overview . --pretty
+cgraph impact "handleRequest" --mode decision --pretty
 ```
 
-### 4. Build a PR decision summary in one command
+### 2) Quality and Architecture Tools
+
+Use these for engineering health, refactoring strategy, and architecture compliance.
+
+- `deadcode`, `cycles`, `stats`, `suggest`
+- `lint`, `validate`, `dna`, `overview`
+
+Typical loop:
 
 ```bash
-cgraph pr-summary --dir . --pretty
-cgraph pr-summary --dir . --files src/cli.ts,src/mcp.ts --format markdown
+cgraph dna --pretty
+cgraph lint --pretty
+cgraph deadcode --pretty
 ```
 
-### 5. Enforce merge gates with policy thresholds
+### 3) PR and Gate Tools
+
+Use these for release readiness and merge policy enforcement.
+
+- `pr-summary`, `gate`
+- `baseline save|list|compare`, `trend`
+
+Typical loop:
 
 ```bash
-cgraph gate --dir . --pretty
-cgraph gate --dir . --files src/cli.ts --max-cycles 2 --max-dead 50 --min-health 70 --max-risk 60
+cgraph pr-summary --dir . --format markdown
+cgraph gate --dir . --max-cycles 2 --max-dead 50 --min-health 70 --max-risk 60
 ```
 
-### 6. Track quality trend over time
+### 4) Reliability and Evaluation Tools
+
+Use these to continuously validate stack behavior and impact quality.
+
+- `smoke`
+- `benchmark` (alias: `eval-impact`)
+
+Typical loop:
 
 ```bash
-cgraph baseline save sprint-24 --dir .
-cgraph baseline list --dir .
-cgraph trend --dir .
+cgraph smoke --dir demo/finance --target createUser --pretty
+cgraph benchmark demo/impact-eval-cases.sample.json --dir demo/finance --pretty
 ```
 
-## Performance snapshot
+### 5) Runtime Integration Tools
 
-Recent benchmark summary in this workspace:
+Use these to run cgraph as infrastructure in automated and agentic environments.
 
-- Without graph-native flow: 145 calls, 291.5s
-- With cgraph: 6 calls, 13.6s
-- Net speedup: about 21.4x
+- `watch`
+- `serve --mcp`
+- `serve --a2a`
+- `export`
 
-Why it stays fast:
+## MCP Tool Compartments
 
-- Precomputed symbol and relationship graph.
-- Bulk adjacency maps instead of repeated scans.
-- Incremental sync for lower update cost.
+MCP tools are grouped by intent to keep agent usage explicit and predictable.
+
+### Lookup Tier
+
+- `cgraph_search`, `cgraph_node`, `cgraph_files`, `cgraph_status`
+
+### Traversal Tier
+
+- `cgraph_callers`, `cgraph_callees`, `cgraph_trace`, `cgraph_impact`, `cgraph_affected`, `cgraph_changed`
+
+### Context Tier
+
+- `cgraph_context`, `cgraph_explore`, `cgraph_auto_context`, `cgraph_intent_search`
+
+### Quality Tier
+
+- `cgraph_deadcode`, `cgraph_cycles`, `cgraph_stats`, `cgraph_suggest`, `cgraph_validate_plan`, `cgraph_lint`, `cgraph_dna`
+
+### Output Tier
+
+- `cgraph_export`, `cgraph_retrieve_ccr`
+
+## A2A API Workflow
+
+### Start Adapter
+
+```bash
+node ./bin/cgraph.js serve --a2a --port 3210
+```
+
+### Discover Agent Card
+
+```bash
+curl http://localhost:3210/.well-known/agent-card.json
+```
+
+### Register Agent (Signed Claim)
+
+Register an agent with an Ed25519-signed claim before trusted writes in `registration_only` mode.
+
+```bash
+curl -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"register_agent","params":{"agent_id":"agent.demo","claim":"{\"capabilities\":[\"write_node\"]}","signature":"<base64>","public_key":"<pem>"}}'
+```
+
+### Write and Query Nodes
+
+```bash
+curl -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"2","method":"write_node","params":{"agent_id":"agent.demo","name":"finding","kind":"variable"}}'
+
+curl -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"3","method":"query_by_agent","params":{"agent_id":"agent.demo"}}'
+
+curl -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"4","method":"read_lineage","params":{"name":"finding"}}'
+```
+
+### Verified Trust Behavior (`registration_only`)
+
+- Before registration:
+  - `write_node` succeeds with `trust_status: unverified`.
+  - `query_by_agent` returns `registration_found: false` and no trusted authored nodes.
+- Invalid signatures are rejected by `register_agent`.
+- After valid Ed25519 registration:
+  - `write_node` returns `trust_status: verified`.
+  - `query_by_agent` returns `registration_found: true` and registered agent-authored nodes.
+
+These behaviors were validated through live local A2A API tests, including concurrent writes.
+
+### A2A Benchmark Commands
+
+```bash
+npm run benchmark:a2a
+npm run benchmark:a2a:baseline
+npm run benchmark:a2a:compare
+npm run benchmark:a2a:gate
+npm run benchmark:a2a:gate:local
+```
+
+Advanced:
+
+```bash
+node ./scripts/benchmark-a2a-multihop.mjs 25 --save reports/a2a-current.json
+node ./scripts/benchmark-a2a-multihop.mjs 25 --compare reports/a2a-baseline.json --budget fixtures/a2a-benchmark-budget.json --enforce
+```
+
+### A2A API Benchmark (Live Adapter)
+
+Use this when you want endpoint-level latency and throughput numbers from the running A2A server.
+
+1. Start the adapter:
+
+```bash
+node ./bin/cgraph.js serve --a2a --port 3210
+```
+
+2. Measure discovery endpoint latency:
+
+```bash
+curl -s -o /dev/null -w "agent_card_ms=%{time_total}\n" http://localhost:3210/.well-known/agent-card.json
+```
+
+3. Measure JSON-RPC write latency (single call):
+
+```bash
+curl -s -o /dev/null -w "write_node_ms=%{time_total}\n" \
+  -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"b1","method":"write_node","params":{"agent_id":"agent.bench","name":"bench-node","kind":"variable"}}'
+```
+
+4. Measure read/query latency:
+
+```bash
+curl -s -o /dev/null -w "query_by_agent_ms=%{time_total}\n" \
+  -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"b2","method":"query_by_agent","params":{"agent_id":"agent.bench"}}'
+
+curl -s -o /dev/null -w "read_lineage_ms=%{time_total}\n" \
+  -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"b3","method":"read_lineage","params":{"name":"bench-node"}}'
+```
+
+5. Throughput check (PowerShell, concurrent writes):
+
+```powershell
+$jobs = 1..20 | ForEach-Object {
+  Start-Job -ScriptBlock {
+    param($i)
+    $body = "{\"jsonrpc\":\"2.0\",\"id\":\"pw-$i\",\"method\":\"write_node\",\"params\":{\"agent_id\":\"agent.bench\",\"name\":\"bench-$i\",\"kind\":\"variable\"}}"
+    curl.exe -s -X POST "http://localhost:3210/rpc" -H "content-type: application/json" -d $body | Out-Null
+  } -ArgumentList $_
+}
+$start = Get-Date
+$jobs | Receive-Job -Wait | Out-Null
+$elapsed = (Get-Date) - $start
+"concurrent_writes=20 elapsed_ms=$([int]$elapsed.TotalMilliseconds)"
+$jobs | Remove-Job -Force
+```
+
+Notes:
+
+- For trustworthy comparisons, run each measurement multiple times and compare p50/p95.
+- In `registration_only` trust mode, register the benchmarking agent first if you want writes counted as verified.
 
 ## Architecture
 
-### At a glance
+### System View
 
 ```text
 Repository files -> Parser + Indexer -> .cgraph/graph.db
@@ -157,19 +315,17 @@ Repository files -> Parser + Indexer -> .cgraph/graph.db
                                   Graph engine
                            (search, trace, impact, stats)
                                          |
-                                 CLI and MCP tools
+                                CLI, MCP, and A2A APIs
 ```
 
-### Layer model
+### Layered Model
 
-- Ingestion layer: file walking, parsing, symbol and edge extraction.
-- Storage layer: local SQLite graph with files, nodes, and edges.
-- Analysis layer: traversal, impact heuristics, cycles, dead code, stats.
-- Interface layer: CLI commands and MCP server tools.
+- Ingestion: file walking, parsing, symbol and edge extraction.
+- Storage: local SQLite graph with files, nodes, and edges.
+- Analysis: traversal, impact heuristics, cycles, dead code, and stats.
+- Interface: CLI commands, MCP tool surface, and A2A JSON-RPC adapter.
 
-### End-to-end flows
-
-Flow 1: index and query
+### End-to-End Flow (Index and Query)
 
 ```mermaid
 sequenceDiagram
@@ -187,86 +343,28 @@ sequenceDiagram
   CLI-->>Dev: JSON answer
 ```
 
-Flow 2: impact benchmark
+## Performance Snapshot
 
-```mermaid
-sequenceDiagram
-  participant Dev as Developer or Agent
-  participant CLI as cgraph benchmark
-  participant ENG as Impact engine
-  participant DB as Graph DB
+Recent benchmark summary in this workspace:
 
-  Dev->>CLI: benchmark with cases JSON
-  CLI->>DB: Load indexed graph
-  CLI->>ENG: Evaluate expected vs actual impact
-  ENG-->>CLI: Case metrics plus summary
-  CLI-->>Dev: JSON output and optional saved file
-```
+- Without graph-native flow: 145 calls, 291.5s
+- With cgraph: 6 calls, 13.6s
+- Net speedup: about 21.4x
 
-Flow 3: agent runtime
+Why it remains fast:
 
-```mermaid
-sequenceDiagram
-  participant Agent as Copilot Agent
-  participant MCP as cgraph MCP server
-  participant DB as Graph DB
+- Precomputed symbol and relationship graph.
+- Bulk adjacency maps instead of repeated scans.
+- Incremental sync for low update cost.
 
-  Agent->>MCP: cgraph_search or cgraph_node
-  MCP->>DB: Symbol lookup
-  DB-->>MCP: Location and relationship data
-  Agent->>MCP: cgraph_callers or cgraph_impact
-  MCP->>DB: Graph traversal
-  DB-->>MCP: Ranked affected nodes and files
-  MCP-->>Agent: Bounded context payload
-```
+## Output Modes
 
-## CLI and MCP
+- `--pretty`: readable structured JSON for humans.
+- `--format markdown`: report-ready output on commands like `overview`, `pr-summary`, and `gate`.
 
-### Most-used CLI commands
+## Diagnostics and Examples
 
-Core:
-
-- index [dir], sync [dir]
-- search <query>, node <symbol>
-- callers <symbol>, callees <symbol>
-- trace <from> <to>, impact <symbol>
-- context <task>, explore <query>
-
-Quality and architecture:
-
-- deadcode, cycles, stats, suggest
-- lint, validate, dna, overview
-
-PR and release quality:
-
-- pr-summary, gate
-- baseline save|list|compare, trend
-
-Reliability and benchmark:
-
-- smoke
-- benchmark (alias: eval-impact)
-
-Infra:
-
-- status, files, changed, affected, export, watch [dir], serve --mcp
-
-Output modes:
-
-- `--pretty` for human-readable JSON
-- `--format markdown` on overview/pr-summary/gate for PR-ready reports
-
-### MCP tools (23)
-
-- cgraph_search, cgraph_node, cgraph_files, cgraph_status
-- cgraph_callers, cgraph_callees, cgraph_trace, cgraph_impact, cgraph_affected, cgraph_changed
-- cgraph_context, cgraph_explore, cgraph_auto_context, cgraph_intent_search
-- cgraph_deadcode, cgraph_cycles, cgraph_stats, cgraph_suggest, cgraph_validate_plan, cgraph_lint, cgraph_dna
-- cgraph_export, cgraph_retrieve_ccr
-
-## Diagnostics and examples
-
-Inspect the local graph and repair orphan edges with the library helpers:
+Repair local graph health with library helpers:
 
 ```ts
 import { GraphDB, inspectDbHealth, repairDbHealth } from 'cgraph';
@@ -279,7 +377,7 @@ if (!report.ok) {
 }
 ```
 
-Reference material and examples:
+References:
 
 - [docs/cli-usage.md](docs/cli-usage.md)
 - [docs/mcp-workflows.md](docs/mcp-workflows.md)
@@ -290,15 +388,13 @@ Reference material and examples:
 
 ## Development
 
-Run locally:
-
 ```bash
 npm install
 npm run build
 npm test
 ```
 
-Focused verification:
+Focused checks:
 
 ```bash
 npm test -- __tests__/cli.test.ts __tests__/graph.test.ts
@@ -308,7 +404,7 @@ node ./bin/cgraph.js benchmark demo/impact-eval-cases.sample.json --dir demo/fin
 
 ## Configuration
 
-Optional .cgraph.json in project root:
+Optional `.cgraph.json` in project root:
 
 ```json
 {
@@ -322,11 +418,16 @@ Optional .cgraph.json in project root:
     "minOverallHealth": 70,
     "maxRiskScore": 60,
     "requireAffectedTests": false
+  },
+  "a2a": {
+    "trustMode": "registration_only",
+    "maxVerifyLatencyMs": 10,
+    "allowVerifyFallback": true
   }
 }
 ```
 
-## Use as a library
+## Use as a Library
 
 ```ts
 import { GraphDB } from './src/storage';

@@ -8,7 +8,7 @@ import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
 import type {
-  FileRecord, NodeRecord, EdgeRecord, SearchResult, StatusInfo,
+  FileRecord, NodeRecord, EdgeRecord, SearchResult, StatusInfo, EdgeCost,
 } from './types';
 
 // --- Schema ---------------------------------------------------------
@@ -47,7 +47,11 @@ CREATE TABLE IF NOT EXISTS edges (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES nodes(id),
   target_id INTEGER NOT NULL REFERENCES nodes(id),
-  kind      TEXT    NOT NULL
+  kind      TEXT    NOT NULL,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  est_cost_usd REAL NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique
@@ -132,7 +136,29 @@ export class GraphDB {
     db.run('PRAGMA foreign_keys = ON');
     const instance = new GraphDB(db, dbPath);
     instance.exec(SCHEMA);
+    instance.ensureMigrations();
     return instance;
+  }
+
+  private ensureMigrations(): void {
+    this.ensureEdgeCostColumns();
+  }
+
+  private ensureEdgeCostColumns(): void {
+    const cols = this.all('PRAGMA table_info(edges)');
+    const names = new Set(cols.map((c: any) => String(c.name)));
+    if (!names.has('tokens_in')) {
+      this.exec('ALTER TABLE edges ADD COLUMN tokens_in INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!names.has('tokens_out')) {
+      this.exec('ALTER TABLE edges ADD COLUMN tokens_out INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!names.has('latency_ms')) {
+      this.exec('ALTER TABLE edges ADD COLUMN latency_ms INTEGER NOT NULL DEFAULT 0');
+    }
+    if (!names.has('est_cost_usd')) {
+      this.exec('ALTER TABLE edges ADD COLUMN est_cost_usd REAL NOT NULL DEFAULT 0');
+    }
   }
 
   // -- low-level helpers (mimic better-sqlite3 feel) ----------------
@@ -356,15 +382,21 @@ export class GraphDB {
   }
 
   // -- edge ops ------------------------------------------------------
-  insertEdge(sourceId: number, targetId: number, kind: string): void {
+  insertEdge(sourceId: number, targetId: number, kind: string, cost: EdgeCost = {}): void {
     const existing = this.get(
       'SELECT id FROM edges WHERE source_id=? AND target_id=? AND kind=?',
       [sourceId, targetId, kind],
     );
     if (!existing) {
+      const edgeCost = {
+        tokens_in: typeof cost.tokens_in === 'number' ? cost.tokens_in : 0,
+        tokens_out: typeof cost.tokens_out === 'number' ? cost.tokens_out : 0,
+        latency_ms: typeof cost.latency_ms === 'number' ? cost.latency_ms : 0,
+        est_cost_usd: typeof cost.est_cost_usd === 'number' ? cost.est_cost_usd : 0,
+      };
       this.run(
-        'INSERT INTO edges (source_id,target_id,kind) VALUES (?,?,?)',
-        [sourceId, targetId, kind],
+        'INSERT INTO edges (source_id,target_id,kind,tokens_in,tokens_out,latency_ms,est_cost_usd) VALUES (?,?,?,?,?,?,?)',
+        [sourceId, targetId, kind, edgeCost.tokens_in, edgeCost.tokens_out, edgeCost.latency_ms, edgeCost.est_cost_usd],
       );
     }
   }
