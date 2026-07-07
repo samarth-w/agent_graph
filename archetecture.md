@@ -1,155 +1,260 @@
-# cgraph A2A Architectural Changes
+# cgraph Full Architecture
 
-This document summarizes the architecture changes introduced by the A2A rollout on branch `a2a`.
+This document describes the full architecture of cgraph, including ingestion, storage, analysis, interfaces (CLI/MCP/A2A), performance model, and operational/quality systems.
 
-## Change Summary
+## 1) Architecture at a Glance
 
-The A2A rollout added a new runtime integration surface (HTTP JSON-RPC), introduced trust-aware write semantics, extended storage to capture edge cost metadata, and added benchmark + CI gate infrastructure focused on multihop root-cause quality.
+```text
+Repository Source
+  -> Parser + Indexer (symbol/ref extraction)
+  -> GraphDB (SQLite in .cgraph/graph.db)
+  -> Analysis Engine (search/trace/impact/stats/quality)
+  -> Interfaces: CLI | MCP | A2A HTTP JSON-RPC
+  -> Automation: benchmarks, gates, CI workflows
+```
 
-## 1) New A2A Runtime Layer
+Core design principles:
 
-### Added module
-- `src/a2a.ts`
+- Local-first graph persistence for low-latency queries.
+- Precompute once, query many (avoid repeated source scans).
+- Shared analysis core consumed by multiple interfaces.
+- Deterministic outputs for CI and agent workflows.
 
-### Purpose
-- Exposes cgraph as an A2A-capable HTTP service.
-- Serves an agent card endpoint for capability discovery.
-- Handles JSON-RPC methods for registration, writes, lineage reads, and agent-scoped query.
+## 2) Core Layers
 
-### Core behavior
-- Entrypoint: `startA2AServer(rootDir, { port, host })`
-- Request router: `handleA2ARpcRequest(rootDir, request)`
-- Methods:
-  - `register_agent`
-  - `write_node`
-  - `read_lineage`
-  - `query_by_agent`
+### Ingestion Layer
 
-### Architectural impact
-- Introduces transport-layer separation between protocol handling and graph persistence.
-- Allows external agents to interact without directly linking library APIs.
+Primary module: `src/indexer.ts`
 
-## 2) Trust and Identity Model
+Responsibilities:
 
-### Added trust path
-- Signed registration flow with Ed25519 verification in A2A request handling.
-- Policy resolution via config-driven trust mode.
+- File discovery and ignore filtering.
+- Parse phase execution (parallel worker support where possible).
+- Symbol and raw reference extraction.
+- Edge resolution and role classification.
+- Incremental synchronization of graph state.
 
-### Config integration changes
-- `src/config.ts` was extended to parse A2A trust configuration:
-  - `trustMode`
-  - `maxVerifyLatencyMs`
-  - `allowVerifyFallback`
+Key entrypoint:
 
-### Type system changes
-- `src/types.ts` was extended with A2A request/response and trust-related shapes.
+- `indexProject(rootDir, options)`
 
-### Architectural impact
-- Moves write authorization from implicit caller trust to explicit registration + signature verification semantics.
-- Enables deterministic behavior for verified vs unverified writes under `registration_only` mode.
+### Parsing Layer
 
-## 3) Storage Layer Evolution
+Primary module: `src/parser.ts` (+ language-specific helpers)
 
-### Updated module
-- `src/storage.ts`
+Responsibilities:
 
-### Data model changes
-- Edge cost columns and migration support were added.
-- Edge insertion paths now support optional cost metadata.
+- Language-aware AST/syntax parsing.
+- Normalize symbols and references into graph-friendly intermediate structures.
+- Provide consistent output shape for downstream index storage.
 
-### Why this matters
-- A2A multihop workflows require visibility into path cost and confidence-like metadata.
-- Benchmark and analysis layers can measure `cost_visibility_coverage` reliably.
+### Storage Layer
 
-### Architectural impact
-- Storage schema now supports protocol-level provenance and cost-aware reasoning without changing existing graph query APIs.
+Primary module: `src/storage.ts` (`GraphDB`)
 
-## 4) Public Surface and Entry Wiring
+Responsibilities:
 
-### Updated modules
-- `src/index.ts`
-- `src/cli.ts`
+- Database open/close, migrations, and metadata.
+- File/node/edge CRUD.
+- Raw reference staging and resolved edge access.
+- Full-text and fuzzy symbol search helpers.
+- Cached adjacency map generation for fast traversals.
 
-### Changes
-- Export surface updated to include A2A server helpers.
-- CLI serve flow extended to support A2A mode (`serve --a2a`).
+Notable persistence features:
 
-### Architectural impact
-- A2A becomes a first-class runtime mode alongside MCP and CLI workflows.
+- SQLite-backed graph at `.cgraph/graph.db`.
+- Migrations for evolving schema (including A2A cost fields).
+- CCR persistence for compressed context payload retrieval.
 
-## 5) Benchmarking Architecture for A2A
+### Analysis Layer
 
-### Added modules
-- `scripts/benchmark-a2a-multihop.mjs`
-- `scripts/benchmark-a2a-multihop.helpers.mjs`
+Primary modules: `src/graph.ts`, `src/search.ts`, `src/context.ts`, `src/graph/traversal.ts`, `src/lint.ts`
 
-### Added fixtures
-- `fixtures/a2a-benchmark-budget.json` (strict CI profile)
-- `fixtures/a2a-benchmark-budget.local.json` (local developer profile)
+Responsibilities:
 
-### Benchmark capabilities
-- Simulates multihop agent chains.
-- Measures:
-  - root cause accuracy
-  - conflict resolution accuracy
-  - graph RPC efficiency
-  - cost visibility coverage
-  - estimated agent speedup vs flat workflows
-- Supports baseline/save/compare/enforce modes.
+- Graph traversal (`callers`, `callees`, `trace`, `impact`).
+- Symbol/file discovery (`search`, `node`, `files`, `status`).
+- Risk and health (`deadcode`, `cycles`, `stats`, `suggest`, `validate`).
+- Architecture policy linting and DNA summary.
+- Context expansion and exploration for agent workflows.
 
-### Architectural impact
-- Quality verification moved from ad-hoc checks to reproducible, policy-driven benchmark gates.
+## 3) Interface Layer
 
-## 6) CI Gate Integration
+### CLI Interface
 
-### Added workflow
-- `.github/workflows/a2a-benchmark-gate.yml`
+Primary module: `src/cli.ts`
 
-### Purpose
-- Enforces A2A benchmark budget thresholds in CI.
-- Prevents regressions in accuracy, RPC count, and performance budgets.
+Execution model:
 
-### Architectural impact
-- Introduces measurable architecture contracts for A2A behavior at PR time.
+1. Parse command and options.
+2. Resolve root/config.
+3. Open or build graph state.
+4. Call analysis/storage/index modules.
+5. Emit structured output (`--pretty` / markdown formatters where supported).
 
-## 7) Test Architecture Expansion
+### MCP Interface
 
-### Added tests
-- `__tests__/a2a.test.ts`
-- `__tests__/benchmark-a2a-multihop.test.ts`
+Primary module: `src/mcp.ts`
 
-### Updated tests
-- `__tests__/storage.test.ts`
+Execution model:
 
-### Coverage intent
-- Protocol correctness
-- trust/registration paths
-- benchmark parser + gate logic
-- schema/cost compatibility
+1. Start JSON-RPC loop via `startMcpServer`.
+2. `ToolHandler` dispatch map routes `cgraph_*` tool methods.
+3. Shared `getDb` path ensures graph availability/index freshness.
+4. Handlers invoke core analysis functions.
+5. Optional output compression and CCR retrieval for context-heavy responses.
 
-### Architectural impact
-- Improves confidence in cross-layer behavior (transport -> trust -> storage -> benchmark).
+### A2A Interface
 
-## 8) Documentation and Operational Model
+Primary module: `src/a2a.ts`
 
-### Updated docs
-- `README.md`
-- `docs/cli-usage.md`
-- `docs/mcp-workflows.md`
+Execution model:
 
-### What changed conceptually
-- cgraph is now positioned not only as a graph CLI/MCP tool, but also as an A2A memory substrate with measurable multihop performance and enforceable quality gates.
+1. HTTP server startup via `startA2AServer`.
+2. Discovery endpoint: `/.well-known/agent-card.json`.
+3. RPC endpoint routes to `handleA2ARpcRequest`.
+4. Supported methods: `register_agent`, `write_node`, `query_by_agent`, `read_lineage`.
 
-## 9) Final Architecture Picture
+Trust model integration:
 
-A2A integration introduced a new protocol layer on top of existing graph services while preserving the core architecture:
+- Policy from `src/config.ts` (`registration_only`, verification latency/fallback knobs).
+- Ed25519 claim verification for signed registration.
+- Write trust state reflected in persisted node semantics.
 
-- Ingestion/indexing remains in `src/indexer.ts`.
-- Core analysis remains in `src/graph.ts`.
-- Persistence remains in `src/storage.ts` (extended for cost metadata).
-- Interfaces now include:
-  - CLI
-  - MCP
-  - A2A HTTP JSON-RPC
+## 4) Data Model (Conceptual)
 
-This keeps the core graph engine stable while expanding interoperability and verification rigor.
+Entities:
+
+- Files: path + language + indexing metadata.
+- Nodes: symbol records (name, kind, qualified name, doc, file binding).
+- Edges: relationships (calls/imports/references), optional cost metadata.
+- Raw refs: unresolved references used during resolution pass.
+- Meta/config tables: status/version/index timestamps.
+- CCR records: compressed response payloads retrievable by id.
+
+Relationship model:
+
+- Directed edges support impact and path traversal.
+- Dual adjacency maps (`from`/`to`) optimize caller/callee and cycle analysis.
+
+## 5) End-to-End Flows
+
+### Index + Query Flow
+
+```mermaid
+sequenceDiagram
+  participant Dev as Developer/Agent
+  participant CLI as CLI/MCP/A2A Frontend
+  participant IDX as Indexer
+  participant DB as GraphDB
+  participant ENG as Analysis Engine
+
+  Dev->>CLI: Query or command
+  CLI->>IDX: Ensure index/sync (as needed)
+  IDX->>DB: Upsert files, nodes, edges
+  CLI->>ENG: Execute search/trace/impact/etc
+  ENG->>DB: Read graph structures
+  DB-->>ENG: Nodes/edges/metadata
+  ENG-->>CLI: Structured result
+  CLI-->>Dev: Response
+```
+
+### MCP Tool Flow
+
+```mermaid
+sequenceDiagram
+  participant Agent as External Agent
+  participant MCP as MCP Server
+  participant TH as ToolHandler
+  participant DB as GraphDB
+  participant ENG as Analysis Engine
+
+  Agent->>MCP: cgraph_* JSON-RPC request
+  MCP->>TH: Dispatch by method
+  TH->>DB: Ensure/open/index state
+  TH->>ENG: Run operation
+  ENG->>DB: Graph reads
+  TH-->>MCP: Tool result
+  MCP-->>Agent: JSON-RPC response
+```
+
+### A2A Trust Flow
+
+```mermaid
+sequenceDiagram
+  participant Agent as A2A Client
+  participant A2A as A2A Server
+  participant DB as GraphDB
+
+  Agent->>A2A: register_agent(claim, signature, public_key)
+  A2A->>A2A: verify Ed25519 signature
+  A2A->>DB: persist registration/trust state
+  Agent->>A2A: write_node(...)
+  A2A->>A2A: evaluate trust policy
+  A2A->>DB: persist node and edges with trust metadata
+  Agent->>A2A: query_by_agent/read_lineage
+  A2A->>DB: query graph
+  A2A-->>Agent: structured RPC result
+```
+
+## 6) Performance Architecture
+
+Key performance strategies:
+
+- Persistent local graph avoids repeated full-source scans.
+- Cached adjacency/materialized maps reduce high-fanout query cost.
+- Incremental indexing and watch mode limit recomputation scope.
+- Adaptive limits (`src/adaptive.ts`) bound expensive traversals.
+- Optional compressed output path for large context payloads.
+
+Observed benchmark posture (current branch state):
+
+- A2A multihop benchmark and enforce-mode gates are integrated.
+- Strict and local gate profiles are both available.
+
+## 7) Reliability and Quality Controls
+
+Test layers:
+
+- Unit and integration tests under `__tests__/`.
+- Dedicated A2A protocol and benchmark tests.
+- Storage and migration compatibility checks.
+
+Quality gates:
+
+- Benchmark budgets in `fixtures/`.
+- CI workflow for A2A benchmark gate.
+- Architecture and dead-code checks via CLI/MCP tools.
+
+## 8) Security and Trust Considerations
+
+- A2A registration supports signed identity claims (Ed25519).
+- Trust mode governs verified vs unverified write semantics.
+- Trust metadata is propagated through node/query responses.
+- Policy is config-driven, allowing stricter production profiles.
+
+## 9) Operational Model
+
+Supported operating modes:
+
+- Local developer CLI (`index`, `search`, `impact`, etc).
+- Persistent MCP tool server for agent runtime.
+- HTTP A2A adapter for interoperable multi-agent write/query flows.
+
+Common lifecycle:
+
+1. Build/index repository graph.
+2. Serve via CLI or long-running MCP/A2A mode.
+3. Run benchmark/gate checks before merge.
+
+## 10) Architectural Changes Introduced by A2A Rollout
+
+Compared with pre-A2A architecture, the rollout added:
+
+- New interface layer module: `src/a2a.ts`.
+- Trust-aware registration and write policy enforcement.
+- Storage schema support for edge-cost metadata.
+- A2A-specific benchmark harness + helper modules.
+- Enforceable CI gate workflow for A2A quality/perf thresholds.
+
+This expanded interoperability without replacing the core graph engine architecture.
