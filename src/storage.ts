@@ -4,11 +4,15 @@
  * sql.js keeps the DB in memory and writes to disk on save().
  * The GraphDB.open() factory is async because sql.js needs to load WASM.
  */
+import crypto from 'crypto';
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
 import type {
   FileRecord, NodeRecord, EdgeRecord, SearchResult, StatusInfo, EdgeCost,
+  MemoryBackfillResult, MemoryCompactionResult, MemoryConflict, MemoryConflictResult, MemoryExpiryResult, MemoryPrincipalSnapshot,
+  MemoryQueryEntry, MemoryQueryInput, MemoryQueryResult, MemoryStatus, MemoryType,
+  MemoryWriteInput, MemoryWriteResult,
 } from './types';
 
 // --- Schema ---------------------------------------------------------
@@ -73,6 +77,73 @@ CREATE TABLE IF NOT EXISTS raw_refs (
 CREATE INDEX IF NOT EXISTS idx_rawrefs_file ON raw_refs(file_id);
 CREATE INDEX IF NOT EXISTS idx_rawrefs_target ON raw_refs(target_name);
 
+CREATE TABLE IF NOT EXISTS principals (
+  principal_id TEXT PRIMARY KEY,
+  trust_tier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  expires_at INTEGER,
+  revoked_at INTEGER,
+  metadata_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_records (
+  memory_id TEXT PRIMARY KEY,
+  namespace TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
+  memory_type TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  FOREIGN KEY (created_by) REFERENCES principals(principal_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_versions (
+  version_id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  evidence_ref_count INTEGER NOT NULL DEFAULT 0,
+  valid_from INTEGER NOT NULL,
+  valid_to INTEGER,
+  supersedes_version_id TEXT,
+  created_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  FOREIGN KEY (memory_id) REFERENCES memory_records(memory_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_evidence (
+  evidence_id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  excerpt_hash TEXT,
+  captured_at INTEGER NOT NULL,
+  FOREIGN KEY (version_id) REFERENCES memory_versions(version_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_conflicts (
+  conflict_id TEXT PRIMARY KEY,
+  left_version_id TEXT NOT NULL,
+  right_version_id TEXT NOT NULL,
+  conflict_type TEXT NOT NULL,
+  resolution_state TEXT NOT NULL,
+  winner_version_id TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_access_log (
+  access_id TEXT PRIMARY KEY,
+  principal_id TEXT,
+  operation TEXT NOT NULL,
+  request_fingerprint TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_subject
+  ON memory_records(namespace, subject_key, status);
+CREATE INDEX IF NOT EXISTS idx_versions_memory_time
+  ON memory_versions(memory_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS metadata (
   key   TEXT PRIMARY KEY,
   value TEXT
@@ -88,6 +159,76 @@ CREATE TABLE IF NOT EXISTS ccr_cache (
 // --- Singleton WASM loader ------------------------------------------
 let sqlPromise: ReturnType<typeof initSqlJs> | null = null;
 const CCR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MEMORY_SCHEMA = `
+CREATE TABLE IF NOT EXISTS principals (
+  principal_id TEXT PRIMARY KEY,
+  trust_tier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  expires_at INTEGER,
+  revoked_at INTEGER,
+  metadata_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_records (
+  memory_id TEXT PRIMARY KEY,
+  namespace TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
+  memory_type TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  FOREIGN KEY (created_by) REFERENCES principals(principal_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_versions (
+  version_id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  evidence_ref_count INTEGER NOT NULL DEFAULT 0,
+  valid_from INTEGER NOT NULL,
+  valid_to INTEGER,
+  supersedes_version_id TEXT,
+  created_at INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  FOREIGN KEY (memory_id) REFERENCES memory_records(memory_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_evidence (
+  evidence_id TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  excerpt_hash TEXT,
+  captured_at INTEGER NOT NULL,
+  FOREIGN KEY (version_id) REFERENCES memory_versions(version_id)
+);
+
+CREATE TABLE IF NOT EXISTS memory_conflicts (
+  conflict_id TEXT PRIMARY KEY,
+  left_version_id TEXT NOT NULL,
+  right_version_id TEXT NOT NULL,
+  conflict_type TEXT NOT NULL,
+  resolution_state TEXT NOT NULL,
+  winner_version_id TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_access_log (
+  access_id TEXT PRIMARY KEY,
+  principal_id TEXT,
+  operation TEXT NOT NULL,
+  request_fingerprint TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_subject
+  ON memory_records(namespace, subject_key, status);
+CREATE INDEX IF NOT EXISTS idx_versions_memory_time
+  ON memory_versions(memory_id, created_at DESC);
+`;
+const sharedDbInstances = new Map<string, any>();
+const sharedDbPromises = new Map<string, Promise<any>>();
 function loadSql() {
   if (!sqlPromise) sqlPromise = initSqlJs();
   return sqlPromise;
@@ -121,27 +262,45 @@ export class GraphDB {
 
   /** Async factory - use instead of `new`. */
   static async open(dbPath: string): Promise<GraphDB> {
-    const dir = path.dirname(dbPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const normalizedPath = path.resolve(dbPath);
+    const existing = sharedDbInstances.get(normalizedPath);
+    if (existing) return existing;
 
-    const SQL = await loadSql();
-    let db: SqlJsDatabase;
-    if (fs.existsSync(dbPath)) {
-      const buf = fs.readFileSync(dbPath);
-      db = new SQL.Database(buf);
-    } else {
-      db = new SQL.Database();
+    const pending = sharedDbPromises.get(normalizedPath);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const dir = path.dirname(normalizedPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+      const SQL = await loadSql();
+      let db: SqlJsDatabase;
+      if (fs.existsSync(normalizedPath)) {
+        const buf = fs.readFileSync(normalizedPath);
+        db = new SQL.Database(buf);
+      } else {
+        db = new SQL.Database();
+      }
+
+      db.run('PRAGMA foreign_keys = ON');
+      const instance = new GraphDB(db, normalizedPath);
+      instance.exec(SCHEMA);
+      instance.ensureMigrations();
+      sharedDbInstances.set(normalizedPath, instance);
+      return instance;
+    })();
+
+    sharedDbPromises.set(normalizedPath, promise);
+    try {
+      return await promise;
+    } finally {
+      sharedDbPromises.delete(normalizedPath);
     }
-
-    db.run('PRAGMA foreign_keys = ON');
-    const instance = new GraphDB(db, dbPath);
-    instance.exec(SCHEMA);
-    instance.ensureMigrations();
-    return instance;
   }
 
   private ensureMigrations(): void {
     this.ensureEdgeCostColumns();
+    this.exec(MEMORY_SCHEMA);
   }
 
   private ensureEdgeCostColumns(): void {
@@ -198,7 +357,13 @@ export class GraphDB {
     const data = this.db.export();
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(this.dbPath, Buffer.from(data));
+    const temporaryPath = `${this.dbPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    try {
+      fs.writeFileSync(temporaryPath, Buffer.from(data));
+      fs.renameSync(temporaryPath, this.dbPath);
+    } finally {
+      if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+    }
   }
 
   // -- transactions --------------------------------------------------
@@ -676,9 +841,334 @@ export class GraphDB {
     this.run('DELETE FROM ccr_cache WHERE timestamp < ?', [cutoff]);
   }
 
+  registerPrincipal(input: { principalId: string; trustTier?: string; expiresAtMs?: number; metadata?: Record<string, unknown> }): MemoryPrincipalSnapshot {
+    const principalId = input.principalId;
+    const trustTier = input.trustTier ?? 'neutral';
+    const expiresAtMs = typeof input.expiresAtMs === 'number' ? input.expiresAtMs : undefined;
+    const metadataJson = JSON.stringify(input.metadata ?? {});
+    const now = Date.now();
+    const status: MemoryStatus = expiresAtMs && expiresAtMs <= now ? 'expired' : 'active';
+    this.run('DELETE FROM principals WHERE principal_id = ?', [principalId]);
+    this.run(
+      'INSERT INTO principals (principal_id, trust_tier, status, expires_at, revoked_at, metadata_json) VALUES (?,?,?,?,?,?)',
+      [principalId, trustTier, status, expiresAtMs ?? null, null, metadataJson],
+    );
+    return {
+      principalId,
+      trustTier,
+      status,
+      expiresAtMs,
+      metadata: input.metadata ?? {},
+    };
+  }
+
+  revokePrincipal(input: { principalId: string; reason?: string; nowMs?: number }): MemoryPrincipalSnapshot {
+    const principalId = input.principalId;
+    const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now();
+    const existing = this.get('SELECT * FROM principals WHERE principal_id = ?', [principalId]) as any | undefined;
+    const metadataJson = JSON.stringify({
+      ...(existing?.metadata_json ? JSON.parse(existing.metadata_json as string) : {}),
+      reason: input.reason ?? 'revoked',
+    });
+    this.run('DELETE FROM principals WHERE principal_id = ?', [principalId]);
+    this.run(
+      'INSERT INTO principals (principal_id, trust_tier, status, expires_at, revoked_at, metadata_json) VALUES (?,?,?,?,?,?)',
+      [principalId, existing?.trust_tier ?? 'neutral', 'revoked', existing?.expires_at ?? null, nowMs, metadataJson],
+    );
+    return {
+      principalId,
+      trustTier: existing?.trust_tier ?? 'neutral',
+      status: 'revoked',
+      expiresAtMs: existing?.expires_at ? Number(existing.expires_at) : undefined,
+      revokedAtMs: nowMs,
+      metadata: { reason: input.reason ?? 'revoked' },
+    };
+  }
+
+  writeMemory(input: MemoryWriteInput): MemoryWriteResult {
+    const now = input.validFromMs ?? Date.now();
+    const memoryId = input.memoryId ?? crypto.randomUUID();
+    const versionId = input.versionId ?? crypto.randomUUID();
+    const principal = this.get('SELECT * FROM principals WHERE principal_id = ?', [input.principalId]) as any | undefined;
+    if (!principal) {
+      return { ok: false, error: `Unknown principal ${input.principalId}` };
+    }
+    if (principal.status === 'revoked') {
+      return { ok: false, error: `Principal ${input.principalId} is revoked` };
+    }
+    if (principal.status === 'expired') {
+      return { ok: false, error: `Principal ${input.principalId} is expired` };
+    }
+    if (principal.expires_at != null && Number(principal.expires_at) <= now) {
+      this.run('UPDATE principals SET status = ? WHERE principal_id = ?', ['expired', input.principalId]);
+      return { ok: false, error: `Principal ${input.principalId} is expired` };
+    }
+
+    this.run(
+      'INSERT OR IGNORE INTO memory_records (memory_id, namespace, subject_key, memory_type, created_by, created_at, status) VALUES (?,?,?,?,?,?,?)',
+      [memoryId, input.namespace, input.subjectKey, input.memoryType ?? 'fact', input.principalId, now, 'active'],
+    );
+    this.run(
+      'UPDATE memory_records SET namespace = ?, subject_key = ?, memory_type = ?, created_by = ?, created_at = ?, status = ? WHERE memory_id = ?',
+      [input.namespace, input.subjectKey, input.memoryType ?? 'fact', input.principalId, now, 'active', memoryId],
+    );
+
+    const superseded = this.get(
+      'SELECT version_id FROM memory_versions WHERE memory_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+      [memoryId, 'active'],
+    ) as { version_id: string } | undefined;
+    if (superseded?.version_id) {
+      this.run('UPDATE memory_versions SET status = ? WHERE version_id = ?', ['superseded', superseded.version_id]);
+    }
+
+    this.run(
+      'INSERT INTO memory_versions (version_id, memory_id, payload_json, confidence, evidence_ref_count, valid_from, valid_to, supersedes_version_id, created_at, status) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [
+        versionId,
+        memoryId,
+        JSON.stringify(input.payload ?? {}),
+        typeof input.confidence === 'number' ? input.confidence : 0.5,
+        Array.isArray(input.evidence) ? input.evidence.length : 0,
+        now,
+        typeof input.validToMs === 'number' ? input.validToMs : null,
+        superseded?.version_id ?? null,
+        now,
+        'active',
+      ],
+    );
+
+    for (const evidence of input.evidence ?? []) {
+      const evidenceId = crypto.randomUUID();
+      this.run(
+        'INSERT INTO memory_evidence (evidence_id, version_id, source_type, source_ref, excerpt_hash, captured_at) VALUES (?,?,?,?,?,?)',
+        [evidenceId, versionId, evidence.sourceType, evidence.sourceRef, evidence.excerptHash ?? null, evidence.capturedAtMs ?? now],
+      );
+    }
+
+    const competing = this.all(
+      `SELECT mv.version_id, mv.payload_json
+       FROM memory_versions mv
+       JOIN memory_records mr ON mr.memory_id = mv.memory_id
+       WHERE mr.namespace = ? AND mr.subject_key = ? AND mr.memory_type = ?
+         AND mv.status = ? AND mv.version_id <> ?`,
+      [input.namespace, input.subjectKey, input.memoryType ?? 'fact', 'active', versionId],
+    );
+    for (const candidate of competing) {
+      if (String(candidate.payload_json) === JSON.stringify(input.payload ?? {})) continue;
+      const existingConflict = this.get(
+        `SELECT conflict_id FROM memory_conflicts
+         WHERE conflict_type = ? AND ((left_version_id = ? AND right_version_id = ?) OR (left_version_id = ? AND right_version_id = ?))`,
+        ['contradiction', versionId, candidate.version_id, candidate.version_id, versionId],
+      );
+      if (!existingConflict) {
+        this.run(
+          'INSERT INTO memory_conflicts (conflict_id, left_version_id, right_version_id, conflict_type, resolution_state, winner_version_id, created_at) VALUES (?,?,?,?,?,?,?)',
+          [crypto.randomUUID(), versionId, candidate.version_id, 'contradiction', 'open', null, now],
+        );
+      }
+    }
+
+    this.run('INSERT INTO memory_access_log (access_id, principal_id, operation, request_fingerprint, created_at) VALUES (?,?,?,?,?)', [crypto.randomUUID(), input.principalId, 'create', memoryId, now]);
+
+    return { ok: true, memoryId, versionId, status: 'active' };
+  }
+
+  queryMemory(input: MemoryQueryInput): MemoryQueryResult {
+    const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now();
+    if (input.principalId) {
+      const requester = this.get('SELECT * FROM principals WHERE principal_id = ?', [input.principalId]) as any | undefined;
+      if (!requester || requester.status === 'revoked' || requester.status === 'expired') {
+        return { results: [], total: 0 };
+      }
+      const metadata = JSON.parse(String(requester.metadata_json ?? '{}')) as Record<string, unknown>;
+      const namespaces = metadata.namespaces;
+      if (Array.isArray(namespaces) && !namespaces.includes(input.namespace)) {
+        return { results: [], total: 0 };
+      }
+    }
+    const rows = this.all(
+      `SELECT mv.*, mr.namespace, mr.subject_key, mr.memory_type, mr.created_by, mr.status AS record_status
+       FROM memory_versions mv
+       JOIN memory_records mr ON mr.memory_id = mv.memory_id
+       WHERE mr.namespace = ? AND mr.subject_key = ?${input.memoryType ? ' AND mr.memory_type = ?' : ''}
+       ORDER BY mv.created_at DESC`,
+      input.memoryType ? [input.namespace, input.subjectKey, input.memoryType] : [input.namespace, input.subjectKey],
+    );
+
+    const results: MemoryQueryEntry[] = [];
+    for (const row of rows) {
+      const principal = this.get('SELECT * FROM principals WHERE principal_id = ?', [row.created_by]) as any | undefined;
+      const createdAt = Number(row.created_at ?? 0);
+      const confidence = Number(row.confidence ?? 0);
+      const evidenceCount = Number(row.evidence_ref_count ?? 0);
+      const validTo = row.valid_to != null ? Number(row.valid_to) : undefined;
+      const isExpired = (typeof validTo === 'number' && validTo <= nowMs) || String(row.status) === 'expired';
+      const isSuperseded = String(row.status) === 'superseded';
+      const isRevoked = principal?.status === 'revoked';
+      if (isRevoked || (!input.includeExpired && isExpired) || (!input.includeSuperseded && isSuperseded) || (input.requireEvidence && evidenceCount === 0)) {
+        continue;
+      }
+      const trustTier = String(principal?.trust_tier ?? 'neutral');
+      const trustScore = trustTier === 'trusted' ? 1 : trustTier === 'neutral' ? 0.6 : 0.3;
+      const recencyScore = Math.max(0.1, 1 - Math.min(1, (nowMs - createdAt) / (1000 * 60 * 60 * 24 * 7)));
+      const evidenceScore = Math.min(1, evidenceCount / 2);
+      const penalty = isExpired ? 0.45 : 0;
+      const score = 0.35 * trustScore + 0.25 * recencyScore + 0.2 * confidence + 0.2 * evidenceScore - penalty;
+      const evidenceRefs = this.all('SELECT source_type, source_ref, excerpt_hash FROM memory_evidence WHERE version_id = ? ORDER BY captured_at, evidence_id', [row.version_id])
+        .map((e: any) => ({
+          sourceType: String(e.source_type),
+          sourceRef: String(e.source_ref),
+          ...(e.excerpt_hash ? { excerptHash: String(e.excerpt_hash) } : {}),
+        }));
+      const policyWarnings = [] as string[];
+      if (isExpired) policyWarnings.push('expired');
+      if (evidenceCount === 0) policyWarnings.push('low evidence');
+      if (isSuperseded) policyWarnings.push('superseded');
+      const acceptedRules = ['principal active', 'validity accepted'];
+      if (evidenceCount > 0) acceptedRules.push('evidence present');
+
+      results.push({
+        memoryId: String(row.memory_id),
+        versionId: String(row.version_id),
+        namespace: String(row.namespace),
+        subjectKey: String(row.subject_key),
+        memoryType: String(row.memory_type) as MemoryType,
+        payload: JSON.parse(String(row.payload_json ?? '{}')) as Record<string, unknown>,
+        confidence,
+        status: String(row.status) as MemoryStatus,
+        score,
+        scoreComponents: { trust: trustScore, recency: recencyScore, confidence, evidence: evidenceScore, penalty },
+        evidenceCount,
+        createdAt,
+        policyWarnings,
+        acceptedRules,
+        evidenceRefs,
+      });
+    }
+
+    results.sort((a, b) => b.score - a.score || b.scoreComponents.trust - a.scoreComponents.trust || b.createdAt - a.createdAt || a.versionId.localeCompare(b.versionId));
+    const limit = typeof input.limit === 'number' && input.limit > 0 ? input.limit : results.length;
+    return { results: results.slice(0, limit), total: results.length };
+  }
+
+  resolveConflict(input: { leftVersionId: string; rightVersionId: string; conflictType?: string; winnerVersionId?: string }): MemoryConflictResult {
+    const resolutionState = input.winnerVersionId ? 'winner_selected' : 'open';
+    const existing = this.get(
+      `SELECT conflict_id FROM memory_conflicts
+       WHERE ((left_version_id = ? AND right_version_id = ?) OR (left_version_id = ? AND right_version_id = ?))
+         AND resolution_state = ? ORDER BY created_at DESC LIMIT 1`,
+      [input.leftVersionId, input.rightVersionId, input.rightVersionId, input.leftVersionId, 'open'],
+    ) as { conflict_id: string } | undefined;
+    if (existing && input.winnerVersionId) {
+      this.run(
+        'UPDATE memory_conflicts SET resolution_state = ?, winner_version_id = ? WHERE conflict_id = ?',
+        ['winner_selected', input.winnerVersionId, existing.conflict_id],
+      );
+      return { conflictId: existing.conflict_id, resolutionState: 'winner_selected' };
+    }
+    const conflictId = crypto.randomUUID();
+    this.run(
+      'INSERT INTO memory_conflicts (conflict_id, left_version_id, right_version_id, conflict_type, resolution_state, winner_version_id, created_at) VALUES (?,?,?,?,?,?,?)',
+      [conflictId, input.leftVersionId, input.rightVersionId, input.conflictType ?? 'contradiction', resolutionState, input.winnerVersionId ?? null, Date.now()],
+    );
+    return { conflictId, resolutionState };
+  }
+
+  listConflicts(input: { versionId?: string; includeResolved?: boolean } = {}): MemoryConflict[] {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (input.versionId) {
+      conditions.push('(left_version_id = ? OR right_version_id = ?)');
+      params.push(input.versionId, input.versionId);
+    }
+    if (!input.includeResolved) {
+      conditions.push('resolution_state = ?');
+      params.push('open');
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    return this.all(`SELECT * FROM memory_conflicts ${where} ORDER BY created_at, conflict_id`, params as any[]).map((row: any) => ({
+      conflictId: String(row.conflict_id),
+      leftVersionId: String(row.left_version_id),
+      rightVersionId: String(row.right_version_id),
+      conflictType: String(row.conflict_type),
+      resolutionState: String(row.resolution_state) as MemoryConflict['resolutionState'],
+      ...(row.winner_version_id ? { winnerVersionId: String(row.winner_version_id) } : {}),
+      createdAt: Number(row.created_at),
+    }));
+  }
+
+  backfillLegacyA2AMemory(): MemoryBackfillResult {
+    const legacyNodes = this.all(
+      `SELECT n.*, f.path AS file_path FROM nodes n
+       JOIN files f ON f.id = n.file_id
+       WHERE f.path LIKE 'a2a/%' AND n.doc IS NOT NULL
+       ORDER BY n.id`,
+    );
+    let importedCount = 0;
+    let skippedCount = 0;
+    for (const node of legacyNodes) {
+      const marker = `legacy-a2a:${node.id}`;
+      if (this.getMeta(marker)) {
+        skippedCount++;
+        continue;
+      }
+      let payload: Record<string, unknown>;
+      try {
+        payload = JSON.parse(String(node.doc)) as Record<string, unknown>;
+      } catch {
+        payload = { doc: String(node.doc) };
+      }
+      const principalId = typeof payload.agent_id === 'string' ? payload.agent_id : 'legacy-import';
+      if (!this.get('SELECT principal_id FROM principals WHERE principal_id = ?', [principalId])) {
+        this.registerPrincipal({ principalId, trustTier: 'legacy', metadata: { imported: true } });
+      }
+      const result = this.writeMemory({
+        principalId,
+        namespace: 'legacy-a2a',
+        subjectKey: String(node.qualified_name),
+        memoryType: 'observation',
+        payload,
+        confidence: 0.4,
+        evidence: [{ sourceType: 'legacy_import', sourceRef: String(node.file_path), excerptHash: crypto.createHash('sha256').update(String(node.doc)).digest('hex') }],
+      });
+      if (result.ok) {
+        this.setMeta(marker, result.versionId ?? 'imported');
+        importedCount++;
+      } else {
+        skippedCount++;
+      }
+    }
+    return { importedCount, skippedCount };
+  }
+
+  expireMemory(input: { nowMs?: number }): MemoryExpiryResult {
+    const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now();
+    const rows = this.all('SELECT version_id, memory_id FROM memory_versions WHERE status <> ? AND valid_to IS NOT NULL AND valid_to <= ?', ['expired', nowMs]);
+    for (const row of rows) {
+      this.run('UPDATE memory_versions SET status = ? WHERE version_id = ?', ['expired', row.version_id]);
+      const activeCount = Number(this.get('SELECT COUNT(*) as c FROM memory_versions WHERE memory_id = ? AND status = ?', [row.memory_id, 'active'])?.c ?? 0);
+      if (activeCount === 0) {
+        this.run('UPDATE memory_records SET status = ? WHERE memory_id = ?', ['expired', row.memory_id]);
+      }
+    }
+    return { expiredCount: rows.length };
+  }
+
+  compactMemory(input: { nowMs?: number; retentionMs?: number }): MemoryCompactionResult {
+    const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now();
+    const retentionMs = typeof input.retentionMs === 'number' && input.retentionMs > 0 ? input.retentionMs : 7 * 24 * 60 * 60 * 1000;
+    const rows = this.all(
+      'SELECT memory_id FROM memory_records WHERE status IN (?, ?) AND created_at < ?',
+      ['expired', 'revoked', nowMs - retentionMs],
+    );
+    for (const row of rows) {
+      this.run('UPDATE memory_records SET status = ? WHERE memory_id = ?', ['tombstoned', row.memory_id]);
+    }
+    return { tombstonedCount: rows.length };
+  }
+
   close(): void {
     this.save();
-    this.db.close();
   }
 }
 

@@ -182,6 +182,26 @@ describe('GraphDB', () => {
         if (fs.existsSync(persistDir)) fs.rmSync(persistDir, { recursive: true, force: true });
       }
     });
+
+    it('should share a single in-memory connection for the same database path', async () => {
+      const persistDir = createTempDir();
+      const persistPath = path.join(persistDir, 'shared.db');
+      try {
+        const db1 = await GraphDB.open(persistPath);
+        const db2 = await GraphDB.open(persistPath);
+
+        const fileId = db1.upsertFile('src/shared.ts', 'h2', 'typescript', 9, 1000).id;
+        db1.insertNode(fileId, 'sharedFn', 'src/shared.ts::sharedFn', 'function', 1, 3, null, null, true);
+
+        const nodes = db2.findNodesByName('sharedFn');
+        expect(nodes.length).toBe(1);
+
+        db1.close();
+        db2.close();
+      } finally {
+        if (fs.existsSync(persistDir)) fs.rmSync(persistDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('Transactions', () => {

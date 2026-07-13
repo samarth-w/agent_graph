@@ -1,0 +1,6 @@
+{
+  "samples": 100,
+  "writeP95Ms": 50,
+  "queryP95Ms": 50,
+  "minimumMixedOpsPerSecond": 20
+}

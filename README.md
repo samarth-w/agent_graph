@@ -43,7 +43,8 @@ What this unlocks:
 1. A2A server starts from `startA2AServer` in `src/a2a.ts`.
 2. HTTP JSON-RPC requests flow through `handleA2ARpcRequest`.
 3. Methods `register_agent`, `write_node`, `query_by_agent`, and `read_lineage` are validated and executed against `GraphDB`.
-4. Trust policy is resolved from config and request context before writes.
+4. Optional controls enforce endpoint auth, registration expiry, and request-rate limits.
+5. Trust policy is resolved from config and request context before writes.
 
 ## Quick Start
 
@@ -199,6 +200,14 @@ curl -X POST http://localhost:3210/rpc \
   -d '{"jsonrpc":"2.0","id":"1","method":"register_agent","params":{"agent_id":"agent.demo","claim":"{\"capabilities\":[\"write_node\"]}","signature":"<base64>","public_key":"<pem>"}}'
 ```
 
+Optional: revoke a registration.
+
+```bash
+curl -X POST http://localhost:3210/rpc \
+  -H "content-type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"1b","method":"revoke_agent","params":{"agent_id":"agent.demo","reason":"key_rotation"}}'
+```
+
 ### Write and Query Nodes
 
 ```bash
@@ -307,41 +316,14 @@ Notes:
 
 ## Architecture
 
-### System View
+The full architecture is maintained in [architecture.md](architecture.md).
 
-```text
-Repository files -> Parser + Indexer -> .cgraph/graph.db
-                                         |
-                                  Graph engine
-                           (search, trace, impact, stats)
-                                         |
-                                CLI, MCP, and A2A APIs
-```
-
-### Layered Model
+Summary:
 
 - Ingestion: file walking, parsing, symbol and edge extraction.
 - Storage: local SQLite graph with files, nodes, and edges.
 - Analysis: traversal, impact heuristics, cycles, dead code, and stats.
-- Interface: CLI commands, MCP tool surface, and A2A JSON-RPC adapter.
-
-### End-to-End Flow (Index and Query)
-
-```mermaid
-sequenceDiagram
-  participant Dev as Developer or Agent
-  participant CLI as cgraph CLI
-  participant IDX as Indexer
-  participant DB as Graph DB
-
-  Dev->>CLI: cgraph index <repo>
-  CLI->>IDX: Parse and extract graph
-  IDX->>DB: Upsert files, nodes, edges
-  Dev->>CLI: cgraph callers <symbol>
-  CLI->>DB: Query adjacency maps
-  DB-->>CLI: Structured result
-  CLI-->>Dev: JSON answer
-```
+- Interfaces: CLI commands, MCP tool surface, and A2A JSON-RPC adapter.
 
 ## Performance Snapshot
 
@@ -350,6 +332,14 @@ Recent benchmark summary in this workspace:
 - Without graph-native flow: 145 calls, 291.5s
 - With cgraph: 6 calls, 13.6s
 - Net speedup: about 21.4x
+
+Benchmark evidence and reproduction:
+
+- Raw benchmark report used for these headline figures: [demo/demo_benchmark.md](demo/demo_benchmark.md)
+- Repro command for agent-workflow benchmark: `node ./scripts/benchmark-agent.mjs demo/finance`
+- Repro command for MCP latency/index benchmark: `node ./scripts/benchmark.mjs demo/finance`
+- Budget policy for reproducible performance gates: [fixtures/performance-budget.json](fixtures/performance-budget.json) via [scripts/check-performance-budget.mjs](scripts/check-performance-budget.mjs)
+- A2A benchmark script and budgets: [scripts/benchmark-a2a-multihop.mjs](scripts/benchmark-a2a-multihop.mjs), [fixtures/a2a-benchmark-budget.json](fixtures/a2a-benchmark-budget.json), [fixtures/a2a-benchmark-budget.local.json](fixtures/a2a-benchmark-budget.local.json)
 
 Why it remains fast:
 
@@ -381,6 +371,9 @@ References:
 
 - [docs/cli-usage.md](docs/cli-usage.md)
 - [docs/mcp-workflows.md](docs/mcp-workflows.md)
+- [architecture.md](architecture.md)
+- [improvements.md](improvements.md)
+- [docs/README.md](docs/README.md)
 - [docs/troubleshooting.md](docs/troubleshooting.md)
 - [examples/diagnostics-repair.ts](examples/diagnostics-repair.ts)
 - [fixtures/impact-eval-cases.sample.json](fixtures/impact-eval-cases.sample.json)
@@ -422,7 +415,12 @@ Optional `.cgraph.json` in project root:
   "a2a": {
     "trustMode": "registration_only",
     "maxVerifyLatencyMs": 10,
-    "allowVerifyFallback": true
+    "allowVerifyFallback": true,
+    "authToken": "change-me",
+    "maxBodyBytes": 1048576,
+    "registrationTtlMs": 86400000,
+    "rateLimitMaxRequests": 120,
+    "rateLimitWindowMs": 60000
   }
 }
 ```
@@ -430,8 +428,7 @@ Optional `.cgraph.json` in project root:
 ## Use as a Library
 
 ```ts
-import { GraphDB } from './src/storage';
-import { analyzeImpact } from './src/graph';
+import { GraphDB, analyzeImpact } from 'cgraph';
 
 const db = await GraphDB.open('.cgraph/graph.db');
 const result = analyzeImpact(db, 'createUser', {

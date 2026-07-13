@@ -22,6 +22,8 @@ import { findChangedSymbols } from './git';
 import { LRUCache } from './cache';
 import { FileWatcher } from './watcher';
 import type { McpToolDef, McpToolResult } from './types';
+import { MemoryService } from './memory';
+import { replicateMemoryWrite } from './memory-replication';
 import { SmartCrusher } from './compression/SmartCrusher';
 import { CodeCompressor } from './compression/CodeCompressor';
 import { CCR } from './compression/CCR';
@@ -320,6 +322,150 @@ const TOOLS: McpToolDef[] = [
     },
   },
   {
+    name: 'cgraph_memory_write',
+    description: 'Write a persistent memory record for a namespace/subject pair using the canonical memory service.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        principalId: { type: 'string', description: 'Principal identifier that is writing the memory' },
+        namespace: { type: 'string', description: 'Memory namespace (for example project or agent)' },
+        subjectKey: { type: 'string', description: 'Subject key for the memory record' },
+        memoryType: { type: 'string', description: 'Memory type', enum: ['fact','plan','observation','decision','warning'] },
+        payload: { type: 'object', description: 'Structured payload to store' },
+        confidence: { type: 'number', description: 'Confidence score from 0 to 1', default: 0.5 },
+        memoryId: { type: 'string', description: 'Optional stable memory identifier for revisions and idempotency' },
+        evidence: { type: 'array', description: 'Optional evidence references with sourceType and sourceRef' },
+        validToMs: { type: 'number', description: 'Optional expiration timestamp in milliseconds' },
+        idempotencyKey: { type: 'string', description: 'Optional idempotency key for safe retries' },
+        format: { type: 'string', description: 'Output format', enum: ['text', 'json'], default: 'text' },
+      },
+      required: ['principalId', 'namespace', 'subjectKey'],
+    },
+  },
+  {
+    name: 'cgraph_memory_query',
+    description: 'Query persistent memory records for a namespace/subject pair using the canonical memory service.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        namespace: { type: 'string', description: 'Memory namespace' },
+        subjectKey: { type: 'string', description: 'Subject key' },
+        memoryType: { type: 'string', description: 'Optional memory type filter', enum: ['fact','plan','observation','decision','warning'] },
+        limit: { type: 'number', description: 'Maximum results to return', default: 10 },
+        nowMs: { type: 'number', description: 'Optional deterministic clock timestamp for ranking comparisons' },
+        principalId: { type: 'string', description: 'Optional querying principal for ACL checks' },
+        requireEvidence: { type: 'boolean', description: 'Reject evidence-empty candidates' },
+        includeExpired: { type: 'boolean', description: 'Include expired candidates' },
+        includeSuperseded: { type: 'boolean', description: 'Include superseded candidates' },
+        semanticQuery: { type: 'string', description: 'Optional semantic text used by hybrid ranking when enabled' },
+        format: { type: 'string', description: 'Output format', enum: ['text', 'json'], default: 'text' },
+      },
+      required: ['namespace', 'subjectKey'],
+    },
+  },
+  {
+    name: 'cgraph_memory_register_principal',
+    description: 'Register a principal allowed to write and query persistent memory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        principalId: { type: 'string', description: 'Stable principal identifier' },
+        trustTier: { type: 'string', description: 'Trust tier', default: 'neutral' },
+        namespaces: { type: 'string', description: 'Comma-separated namespace allow-list' },
+        expiresAtMs: { type: 'number', description: 'Optional principal expiration timestamp' },
+      },
+      required: ['principalId'],
+    },
+  },
+  {
+    name: 'cgraph_memory_revoke_principal',
+    description: 'Revoke a memory principal and block future writes and reads.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        principalId: { type: 'string', description: 'Stable principal identifier' },
+        reason: { type: 'string', description: 'Optional revocation reason' },
+        nowMs: { type: 'number', description: 'Optional deterministic revocation timestamp' },
+      },
+      required: ['principalId'],
+    },
+  },
+  {
+    name: 'cgraph_memory_revise',
+    description: 'Append a version that supersedes a persistent memory record.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        principalId: { type: 'string', description: 'Principal identifier' },
+        memoryId: { type: 'string', description: 'Existing stable memory identifier' },
+        namespace: { type: 'string', description: 'Memory namespace' },
+        subjectKey: { type: 'string', description: 'Subject key' },
+        payload: { type: 'object', description: 'Replacement structured payload' },
+        idempotencyKey: { type: 'string', description: 'Optional idempotency key for safe retries' },
+        format: { type: 'string', description: 'Output format', enum: ['text', 'json'], default: 'text' },
+      },
+      required: ['principalId', 'memoryId', 'namespace', 'subjectKey'],
+    },
+  },
+  {
+    name: 'cgraph_memory_conflicts',
+    description: 'List open persistent-memory conflicts, optionally for one version.',
+    inputSchema: { type: 'object', properties: { versionId: { type: 'string', description: 'Optional version identifier' } } },
+  },
+  {
+    name: 'cgraph_memory_resolve',
+    description: 'Record the resolution of a conflict between two memory versions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        leftVersionId: { type: 'string', description: 'First conflicting version' },
+        rightVersionId: { type: 'string', description: 'Second conflicting version' },
+        winnerVersionId: { type: 'string', description: 'Optional selected winner' },
+      },
+      required: ['leftVersionId', 'rightVersionId'],
+    },
+  },
+  {
+    name: 'cgraph_memory_feedback',
+    description: 'Record relevance feedback used by opt-in adaptive memory ranking.',
+    inputSchema: { type: 'object', properties: { versionId: { type: 'string', description: 'Version receiving feedback' }, relevance: { type: 'number', description: 'Relevance score from zero to one' }, principalId: { type: 'string', description: 'Optional feedback author' } }, required: ['versionId', 'relevance'] },
+  },
+  {
+    name: 'cgraph_memory_auto_resolve',
+    description: 'Deterministically resolve high-confidence open conflicts when their rank margin is sufficient.',
+    inputSchema: { type: 'object', properties: { minimumMargin: { type: 'number', description: 'Minimum score advantage required to select a winner' } } },
+  },
+  {
+    name: 'cgraph_memory_expire',
+    description: 'Apply expiry policy to elapsed memory versions.',
+    inputSchema: { type: 'object', properties: { nowMs: { type: 'number', description: 'Optional deterministic clock timestamp' } } },
+  },
+  {
+    name: 'cgraph_memory_compact',
+    description: 'Tombstone expired or revoked memories past their retention period.',
+    inputSchema: { type: 'object', properties: { retentionMs: { type: 'number', description: 'Retention period in milliseconds' } } },
+  },
+  {
+    name: 'cgraph_memory_backfill',
+    description: 'Idempotently import legacy A2A graph nodes into persistent memory.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'cgraph_memory_migration_report',
+    description: 'Show migration parity between legacy A2A records and persistent memory.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'cgraph_memory_metrics',
+    description: 'Return persistent-memory audit and lifecycle counters for operations monitoring.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'cgraph_memory_observability',
+    description: 'Return durable operation latency percentiles and active memory alerts.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'cgraph_dna',
     description: 'Codebase fingerprint: languages, frameworks, architecture style, health scores (modularity, dead code, test coverage, complexity), key hubs, and a natural language summary. One call gives full codebase awareness.',
     inputSchema: {
@@ -365,6 +511,21 @@ export class ToolHandler {
       ['cgraph_intent_search', (a) => this.handleIntentSearch(a)],
       ['cgraph_validate_plan', (a) => this.handleValidatePlan(a)],
       ['cgraph_lint',          (a) => this.handleLint(a)],
+      ['cgraph_memory_write',  (a) => this.handleMemoryWrite(a)],
+      ['cgraph_memory_query',  (a) => this.handleMemoryQuery(a)],
+      ['cgraph_memory_register_principal', (a) => this.handleMemoryRegisterPrincipal(a)],
+      ['cgraph_memory_revoke_principal', (a) => this.handleMemoryRevokePrincipal(a)],
+      ['cgraph_memory_revise', (a) => this.handleMemoryRevise(a)],
+      ['cgraph_memory_conflicts', (a) => this.handleMemoryConflicts(a)],
+      ['cgraph_memory_resolve', (a) => this.handleMemoryResolve(a)],
+      ['cgraph_memory_feedback', (a) => this.handleMemoryFeedback(a)],
+      ['cgraph_memory_auto_resolve', (a) => this.handleMemoryAutoResolve(a)],
+      ['cgraph_memory_expire', (a) => this.handleMemoryExpire(a)],
+      ['cgraph_memory_compact', (a) => this.handleMemoryCompact(a)],
+      ['cgraph_memory_backfill', (a) => this.handleMemoryBackfill(a)],
+      ['cgraph_memory_migration_report', (a) => this.handleMemoryMigrationReport(a)],
+      ['cgraph_memory_metrics', (a) => this.handleMemoryMetrics(a)],
+      ['cgraph_memory_observability', (a) => this.handleMemoryObservability(a)],
       ['cgraph_dna',           (a) => this.handleDna(a)],
     ]);
   }
@@ -884,6 +1045,182 @@ export class ToolHandler {
       lines.push(`  ${v.detail}`);
     }
     return this.textResult(lines.join('\n'));
+  }
+
+  private async handleMemoryWrite(args: Record<string, unknown>): Promise<McpToolResult> {
+    const startedAt = performance.now();
+    const principalId = validateString(args.principalId, 'principalId');
+    const namespace = validateString(args.namespace, 'namespace');
+    const subjectKey = validateString(args.subjectKey, 'subjectKey');
+    const payload = (typeof args.payload === 'object' && args.payload !== null)
+      ? args.payload as Record<string, unknown>
+      : { value: args.payload };
+    const db = await this.getDb();
+    const service = new MemoryService(db);
+    const writeInput = {
+      principalId,
+      namespace,
+      subjectKey,
+      memoryType: (args.memoryType as any) ?? 'fact',
+      payload,
+      confidence: typeof args.confidence === 'number' ? args.confidence : 0.5,
+      memoryId: typeof args.memoryId === 'string' ? args.memoryId : undefined,
+      evidence: Array.isArray(args.evidence) ? args.evidence as any[] : undefined,
+      validToMs: typeof args.validToMs === 'number' ? args.validToMs : undefined,
+      idempotencyKey: typeof args.idempotencyKey === 'string' ? args.idempotencyKey : undefined,
+    };
+    const result = service.writeMemory(writeInput);
+    service.recordTrace({ operation: 'mcp_write', durationMs: performance.now() - startedAt, status: result.ok ? 'ok' : 'error' });
+    if (!result.ok) return this.textResult(result.error ?? 'Memory write failed');
+    const replication = await replicateMemoryWrite(loadConfig(this.rootDir).memory?.replication, {
+      ...writeInput,
+      memoryId: result.memoryId,
+      versionId: result.versionId,
+      idempotencyKey: writeInput.idempotencyKey ?? `replica:${result.versionId}`,
+    });
+    if (args.format === 'json') return this.textResult(JSON.stringify({ ...result, replication }));
+    return this.textResult(`Memory write stored as ${result.versionId}`);
+  }
+
+  private async handleMemoryRegisterPrincipal(args: Record<string, unknown>): Promise<McpToolResult> {
+    const principalId = validateString(args.principalId, 'principalId');
+    const db = await this.getDb();
+    const principal = new MemoryService(db).registerPrincipal({
+      principalId,
+      trustTier: typeof args.trustTier === 'string' ? args.trustTier : 'neutral',
+      expiresAtMs: typeof args.expiresAtMs === 'number' ? args.expiresAtMs : undefined,
+      metadata: typeof args.namespaces === 'string'
+        ? { namespaces: args.namespaces.split(',').map(s => s.trim()).filter(Boolean) }
+        : {},
+    });
+    return this.textResult(JSON.stringify(principal));
+  }
+
+  private async handleMemoryRevokePrincipal(args: Record<string, unknown>): Promise<McpToolResult> {
+    const principalId = validateString(args.principalId, 'principalId');
+    const db = await this.getDb();
+    const principal = new MemoryService(db).revokePrincipal({
+      principalId,
+      reason: typeof args.reason === 'string' ? args.reason : undefined,
+      nowMs: typeof args.nowMs === 'number' ? args.nowMs : undefined,
+    });
+    return this.textResult(JSON.stringify(principal));
+  }
+
+  private async handleMemoryRevise(args: Record<string, unknown>): Promise<McpToolResult> {
+    const principalId = validateString(args.principalId, 'principalId');
+    const memoryId = validateString(args.memoryId, 'memoryId');
+    const namespace = validateString(args.namespace, 'namespace');
+    const subjectKey = validateString(args.subjectKey, 'subjectKey');
+    const payload = typeof args.payload === 'object' && args.payload !== null
+      ? args.payload as Record<string, unknown> : { value: args.payload };
+    const db = await this.getDb();
+    const result = new MemoryService(db).writeMemory({
+      principalId,
+      memoryId,
+      namespace,
+      subjectKey,
+      payload,
+      idempotencyKey: typeof args.idempotencyKey === 'string' ? args.idempotencyKey : undefined,
+    });
+    if (!result.ok) return this.errorResult(result.error ?? 'Memory revision failed');
+    if (args.format === 'json') return this.textResult(JSON.stringify(result));
+    return this.textResult(`Memory revision stored as ${result.versionId}`);
+  }
+
+  private async handleMemoryQuery(args: Record<string, unknown>): Promise<McpToolResult> {
+    const startedAt = performance.now();
+    const namespace = validateString(args.namespace, 'namespace');
+    const subjectKey = validateString(args.subjectKey, 'subjectKey');
+    const db = await this.getDb();
+    const service = new MemoryService(db);
+    const result = service.queryMemory({
+      namespace,
+      subjectKey,
+      memoryType: args.memoryType as any,
+      limit: typeof args.limit === 'number' ? args.limit : undefined,
+      nowMs: typeof args.nowMs === 'number' ? args.nowMs : undefined,
+      principalId: typeof args.principalId === 'string' ? args.principalId : undefined,
+      requireEvidence: args.requireEvidence === true || loadConfig(this.rootDir).memory?.requireEvidenceByDefault === true,
+      includeExpired: args.includeExpired === true,
+      includeSuperseded: args.includeSuperseded === true,
+      semanticQuery: typeof args.semanticQuery === 'string' ? args.semanticQuery : undefined,
+    });
+    service.recordTrace({ operation: 'mcp_query', durationMs: performance.now() - startedAt, status: 'ok' });
+    if (args.format === 'json') return this.textResult(JSON.stringify(result));
+    if (result.results.length === 0) return this.textResult('No persistent memory found for that subject.');
+    const lines = result.results.map((entry, index) => `${index + 1}. [${entry.memoryType}] ${entry.payload && typeof entry.payload === 'object' ? JSON.stringify(entry.payload) : String(entry.payload)} (score=${entry.score.toFixed(2)}, status=${entry.status})`);
+    return this.textResult(lines.join('\n'));
+  }
+
+  private async handleMemoryConflicts(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    const conflicts = new MemoryService(db).listConflicts({
+      versionId: typeof args.versionId === 'string' ? args.versionId : undefined,
+      includeResolved: args.includeResolved === true,
+    });
+    return this.textResult(JSON.stringify(conflicts));
+  }
+
+  private async handleMemoryResolve(args: Record<string, unknown>): Promise<McpToolResult> {
+    const leftVersionId = validateString(args.leftVersionId, 'leftVersionId');
+    const rightVersionId = validateString(args.rightVersionId, 'rightVersionId');
+    const db = await this.getDb();
+    const result = new MemoryService(db).resolveConflict({
+      leftVersionId,
+      rightVersionId,
+      winnerVersionId: typeof args.winnerVersionId === 'string' ? args.winnerVersionId : undefined,
+    });
+    return this.textResult(JSON.stringify(result));
+  }
+
+  private async handleMemoryFeedback(args: Record<string, unknown>): Promise<McpToolResult> {
+    const versionId = validateString(args.versionId, 'versionId');
+    if (typeof args.relevance !== 'number') return this.errorResult('relevance must be a number');
+    const db = await this.getDb();
+    new MemoryService(db).recordFeedback({ versionId, relevance: args.relevance, principalId: typeof args.principalId === 'string' ? args.principalId : undefined });
+    return this.textResult(JSON.stringify({ ok: true }));
+  }
+
+  private async handleMemoryAutoResolve(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).autoResolveConflicts({
+      minimumMargin: typeof args.minimumMargin === 'number' ? args.minimumMargin : undefined,
+    })));
+  }
+
+  private async handleMemoryExpire(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).expireMemory({
+      nowMs: typeof args.nowMs === 'number' ? args.nowMs : undefined,
+    })));
+  }
+
+  private async handleMemoryCompact(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).compactMemory({
+      retentionMs: typeof args.retentionMs === 'number' ? args.retentionMs : undefined,
+    })));
+  }
+
+  private async handleMemoryBackfill(_args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).backfillLegacyA2AMemory()));
+  }
+
+  private async handleMemoryMigrationReport(_args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).getMigrationReport()));
+  }
+
+  private async handleMemoryMetrics(_args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).getMetrics()));
+  }
+
+  private async handleMemoryObservability(_args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).getObservability()));
   }
 
   private async handleDna(_args: Record<string, unknown>): Promise<McpToolResult> {

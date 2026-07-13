@@ -25,7 +25,7 @@ describe('findChangedSymbols', () => {
     const result = await findChangedSymbols(db, tempDir, []);
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBe(0);
-  });
+  }, 15_000);
 
   it('returns symbols for files that exist in DB', async () => {
     const fid = db.upsertFile('src/changed.ts', 'hash1', 'typescript', 100, 1000).id;

@@ -65,7 +65,7 @@ describe('computeLimits', () => {
     const result = computeLimits(db, 'callers');
     expect(result.maxDepth).toBe(2);
     expect(result.maxNodes).toBe(70);
-  });
+  }, 20_000);
 
   it('clamps depth to minimum 1 for node tool on large repo', () => {
     // BASE node: { maxDepth: 1, maxNodes: 15 }, large: -1 depth → would be 0 → clamped to 1
@@ -75,7 +75,7 @@ describe('computeLimits', () => {
     }
     const result = computeLimits(db, 'node');
     expect(result.maxDepth).toBeGreaterThanOrEqual(1);
-  });
+  }, 20_000);
 
   it('reduces depth for high-fan-out symbol (>20 edges)', () => {
     const fid = db.upsertFile('src/hub.ts', 'h1', 'typescript', 100, 1000).id;

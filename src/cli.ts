@@ -26,6 +26,7 @@ import { saveBaseline, listBaselines, compareBaselines, getTrend } from './basel
 import { buildPrSummary } from './cli/pr-summary';
 import { evaluateGate } from './cli/gate';
 import { formatGateMarkdown, formatOverviewMarkdown, formatPrSummaryMarkdown } from './cli/formatters';
+import { MemoryService } from './memory';
 
 export * from './cli/diagnostics';
 export * from './cli/impact';
@@ -955,6 +956,67 @@ program
       if (opts.json) { out(result); } else { out(result, true); }
       if (!result.passed) process.exit(1);
     } finally { db.close(); }
+  });
+
+// ── cgraph memory ──────────────────────────────────────────────
+const memoryCommand = program
+  .command('memory')
+  .description('Operate the durable persistent-memory store');
+
+memoryCommand
+  .command('expire')
+  .description('Mark memory versions whose TTL elapsed as expired')
+  .option('--dir <path>', 'project root directory')
+  .option('--now-ms <ms>', 'deterministic current timestamp')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: { dir?: string; nowMs?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      out(new MemoryService(db).expireMemory({
+        nowMs: opts.nowMs === undefined ? undefined : Number(opts.nowMs),
+      }), opts.pretty);
+    } finally {
+      MemoryService.closeForGraphPath(getDbPath(root));
+      db.close();
+    }
+  });
+
+memoryCommand
+  .command('compact')
+  .description('Tombstone expired or revoked memory records past retention')
+  .option('--dir <path>', 'project root directory')
+  .option('--retention-ms <ms>', 'retention window override')
+  .option('--now-ms <ms>', 'deterministic current timestamp')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: { dir?: string; retentionMs?: string; nowMs?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      out(new MemoryService(db).compactMemory({
+        retentionMs: opts.retentionMs === undefined ? undefined : Number(opts.retentionMs),
+        nowMs: opts.nowMs === undefined ? undefined : Number(opts.nowMs),
+      }), opts.pretty);
+    } finally {
+      MemoryService.closeForGraphPath(getDbPath(root));
+      db.close();
+    }
+  });
+
+memoryCommand
+  .command('metrics')
+  .description('Show persistent-memory audit and lifecycle counters')
+  .option('--dir <path>', 'project root directory')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: { dir?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      out(new MemoryService(db).getMetrics(), opts.pretty);
+    } finally {
+      MemoryService.closeForGraphPath(getDbPath(root));
+      db.close();
+    }
   });
 
 // ── cgraph dna ──────────────────────────────────────────────────

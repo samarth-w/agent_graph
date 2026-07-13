@@ -139,6 +139,36 @@ export function loadConfig(rootDir: string): GraphConfig {
       }
       if (typeof a2a.maxVerifyLatencyMs === 'number') merged.a2a.maxVerifyLatencyMs = a2a.maxVerifyLatencyMs;
       if (typeof a2a.allowVerifyFallback === 'boolean') merged.a2a.allowVerifyFallback = a2a.allowVerifyFallback;
+      if (typeof a2a.authToken === 'string' && a2a.authToken.length > 0) merged.a2a.authToken = a2a.authToken;
+      if (typeof a2a.maxBodyBytes === 'number') merged.a2a.maxBodyBytes = a2a.maxBodyBytes;
+      if (typeof a2a.registrationTtlMs === 'number') merged.a2a.registrationTtlMs = a2a.registrationTtlMs;
+      if (typeof a2a.rateLimitMaxRequests === 'number') merged.a2a.rateLimitMaxRequests = a2a.rateLimitMaxRequests;
+      if (typeof a2a.rateLimitWindowMs === 'number') merged.a2a.rateLimitWindowMs = a2a.rateLimitWindowMs;
+    }
+    if (raw.memory && typeof raw.memory === 'object') {
+      const memory: Record<string, unknown> = raw.memory;
+      merged.memory = {};
+      if (typeof memory.enabled === 'boolean') merged.memory.enabled = memory.enabled;
+      if (typeof memory.requireEvidenceByDefault === 'boolean') merged.memory.requireEvidenceByDefault = memory.requireEvidenceByDefault;
+      if (typeof memory.defaultRetentionMs === 'number' && memory.defaultRetentionMs > 0) {
+        merged.memory.defaultRetentionMs = memory.defaultRetentionMs;
+      }
+      if (typeof memory.allowUnverifiedWrites === 'boolean') merged.memory.allowUnverifiedWrites = memory.allowUnverifiedWrites;
+      if (typeof memory.defaultDenyNamespaceAccess === 'boolean') merged.memory.defaultDenyNamespaceAccess = memory.defaultDenyNamespaceAccess;
+      if (typeof memory.hybridRankingEnabled === 'boolean') merged.memory.hybridRankingEnabled = memory.hybridRankingEnabled;
+      if (typeof memory.autoResolveConflicts === 'boolean') merged.memory.autoResolveConflicts = memory.autoResolveConflicts;
+      if (typeof memory.autoResolveMinimumMargin === 'number' && memory.autoResolveMinimumMargin >= 0) {
+        merged.memory.autoResolveMinimumMargin = memory.autoResolveMinimumMargin;
+      }
+      if (memory.replication && typeof memory.replication === 'object') {
+        const replication = memory.replication as Record<string, unknown>;
+        merged.memory.replication = {};
+        if (typeof replication.enabled === 'boolean') merged.memory.replication.enabled = replication.enabled;
+        if (typeof replication.peerId === 'string') merged.memory.replication.peerId = replication.peerId;
+        if (Array.isArray(replication.peers)) merged.memory.replication.peers = replication.peers.filter((peer): peer is string => typeof peer === 'string' && peer.length > 0);
+        if (typeof replication.authToken === 'string') merged.memory.replication.authToken = replication.authToken;
+        if (typeof replication.timeoutMs === 'number' && replication.timeoutMs > 0) merged.memory.replication.timeoutMs = replication.timeoutMs;
+      }
     }
     return merged;
   } catch {

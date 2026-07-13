@@ -270,12 +270,52 @@ export interface GraphConfig {
   rules?: LintRule[];
   gate?: GateConfig;
   a2a?: A2AConfig;
+  memory?: MemoryConfig;
 }
 
 export interface A2AConfig {
   trustMode?: 'registration_only' | 'per_write';
   maxVerifyLatencyMs?: number;
   allowVerifyFallback?: boolean;
+  authToken?: string;
+  maxBodyBytes?: number;
+  registrationTtlMs?: number;
+  rateLimitMaxRequests?: number;
+  rateLimitWindowMs?: number;
+}
+
+export interface MemoryConfig {
+  enabled?: boolean;
+  requireEvidenceByDefault?: boolean;
+  defaultRetentionMs?: number;
+  allowUnverifiedWrites?: boolean;
+  defaultDenyNamespaceAccess?: boolean;
+  hybridRankingEnabled?: boolean;
+  autoResolveConflicts?: boolean;
+  autoResolveMinimumMargin?: number;
+  replication?: MemoryReplicationConfig;
+}
+
+export interface MemoryReplicationConfig {
+  enabled?: boolean;
+  peerId?: string;
+  peers?: string[];
+  authToken?: string;
+  timeoutMs?: number;
+}
+
+export interface MemoryMetrics {
+  operations: Record<string, number>;
+  openConflicts: number;
+  activeVersions: number;
+  expiredVersions: number;
+  tombstonedRecords: number;
+  rateLimitBuckets: number;
+}
+
+export interface MemoryObservability {
+  operationLatencyMs: Record<string, { count: number; p50: number; p95: number; p99: number }>;
+  alerts: Array<{ name: string; severity: 'warning' | 'critical'; value: number; threshold: number }>;
 }
 
 export interface GateConfig {
@@ -409,6 +449,157 @@ export interface A2ARpcResponse {
   id: string | number | null;
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
+}
+
+// ─── Persistent memory types ──────────────────────────────────
+export type MemoryType = 'fact' | 'plan' | 'observation' | 'decision' | 'warning';
+export type MemoryStatus = 'active' | 'unverified' | 'superseded' | 'revoked' | 'expired' | 'tombstoned';
+
+export interface MemoryEvidenceInput {
+  sourceType: string;
+  sourceRef: string;
+  excerptHash?: string;
+  capturedAtMs?: number;
+}
+
+export interface MemoryPrincipalSnapshot {
+  principalId: string;
+  trustTier: string;
+  status: MemoryStatus;
+  expiresAtMs?: number;
+  revokedAtMs?: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface MemoryWriteInput {
+  principalId: string;
+  namespace: string;
+  subjectKey: string;
+  memoryType?: MemoryType;
+  payload: Record<string, unknown>;
+  confidence?: number;
+  evidence?: MemoryEvidenceInput[];
+  validFromMs?: number;
+  validToMs?: number;
+  memoryId?: string;
+  versionId?: string;
+  idempotencyKey?: string;
+}
+
+export interface MemoryWriteResult {
+  ok: boolean;
+  memoryId?: string;
+  versionId?: string;
+  status?: MemoryStatus;
+  error?: string;
+}
+
+export interface MemoryQueryInput {
+  namespace: string;
+  subjectKey: string;
+  memoryType?: MemoryType;
+  limit?: number;
+  nowMs?: number;
+  principalId?: string;
+  requireEvidence?: boolean;
+  includeExpired?: boolean;
+  includeSuperseded?: boolean;
+  semanticQuery?: string;
+}
+
+export interface MemoryScoreComponents {
+  trust: number;
+  recency: number;
+  confidence: number;
+  evidence: number;
+  penalty: number;
+  semantic?: number;
+  adaptive?: number;
+}
+
+export interface MemoryQueryEntry {
+  memoryId: string;
+  versionId: string;
+  namespace: string;
+  subjectKey: string;
+  memoryType: MemoryType;
+  payload: Record<string, unknown>;
+  confidence: number;
+  status: MemoryStatus;
+  score: number;
+  scoreComponents: MemoryScoreComponents;
+  evidenceCount: number;
+  createdAt: number;
+  policyWarnings: string[];
+  acceptedRules: string[];
+  evidenceRefs: Array<{ sourceType: string; sourceRef: string; excerptHash?: string }>;
+}
+
+export interface MemoryQueryResult {
+  results: MemoryQueryEntry[];
+  total: number;
+}
+
+export interface MemoryPrincipalInput {
+  principalId: string;
+  trustTier?: string;
+  expiresAtMs?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface MemoryRevocationInput {
+  principalId: string;
+  reason?: string;
+  nowMs?: number;
+}
+
+export interface MemoryConflictResult {
+  conflictId: string;
+  resolutionState: 'open' | 'winner_selected' | 'unresolved';
+}
+
+export interface MemoryConflict {
+  conflictId: string;
+  leftVersionId: string;
+  rightVersionId: string;
+  conflictType: string;
+  resolutionState: 'open' | 'winner_selected' | 'unresolved';
+  winnerVersionId?: string;
+  createdAt: number;
+}
+
+export interface MemoryAutoResolutionResult {
+  resolvedCount: number;
+  unresolvedCount: number;
+  conflictIds: string[];
+}
+
+export interface MemoryReplicationResult {
+  attempted: number;
+  acknowledged: number;
+  failedPeers: string[];
+}
+
+export interface MemoryExpiryResult {
+  expiredCount: number;
+}
+
+export interface MemoryCompactionResult {
+  tombstonedCount: number;
+}
+
+export interface MemoryBackfillResult {
+  totalLegacyNodes?: number;
+  importedCount: number;
+  skippedCount: number;
+  parityMismatches?: number;
+}
+
+export interface MemoryMigrationReport {
+  totalLegacyNodes: number;
+  importedLegacyRecords: number;
+  skippedLegacyRecords: number;
+  parityMismatches: number;
 }
 
 // ─── Parsed search query (field-qualified) ─────────────────────

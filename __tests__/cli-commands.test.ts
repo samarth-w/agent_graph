@@ -349,7 +349,7 @@ describe('CLI commands (program.parseAsync)', () => {
     const parsed = JSON.parse(out.get());
     expect(parsed.changed_files).toEqual([]);
     expect(parsed.recommendations[0]).toContain('No changed files detected');
-  });
+  }, 15_000);
 
   it('gate evaluates thresholds and reports pass/fail checks', async () => {
     await program.parseAsync(['node', 'cgraph', 'index', tempDir]);

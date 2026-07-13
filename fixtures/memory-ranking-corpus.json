@@ -1,0 +1,24 @@
+[
+  {
+    "name": "trust breaks equal-score candidates",
+    "namespace": "ranking",
+    "subjectKey": "trust",
+    "nowMs": 2000000000000,
+    "records": [
+      { "id": "trusted", "principal": "principal.trusted", "trustTier": "trusted", "confidence": 0.8, "evidence": 1, "validFromMs": 2000000000000 },
+      { "id": "neutral", "principal": "principal.neutral", "trustTier": "neutral", "confidence": 0.8, "evidence": 1, "validFromMs": 2000000000000 }
+    ],
+    "expectedOrder": ["trusted", "neutral"]
+  },
+  {
+    "name": "confidence breaks candidates with equal trust and recency",
+    "namespace": "ranking",
+    "subjectKey": "confidence",
+    "nowMs": 2000000000000,
+    "records": [
+      { "id": "high", "principal": "principal.equal", "trustTier": "trusted", "confidence": 0.95, "evidence": 1, "validFromMs": 2000000000000 },
+      { "id": "low", "principal": "principal.equal", "trustTier": "trusted", "confidence": 0.2, "evidence": 1, "validFromMs": 2000000000000 }
+    ],
+    "expectedOrder": ["high", "low"]
+  }
+]

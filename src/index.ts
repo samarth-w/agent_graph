@@ -2,6 +2,7 @@
  * Library entry — re-exports for programmatic use.
  */
 export { GraphDB } from './storage';
+export { MemoryService } from './memory';
 export { parseFile } from './parser';
 export { indexProject } from './indexer';
 export { traverse, findCallers, findCallees, analyzeImpact, evaluateImpactCases, findSymbol, tracePath, getNodeDetail, getIndexedFiles, findAffected } from './graph';

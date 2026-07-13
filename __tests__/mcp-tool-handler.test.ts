@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { GraphDB } from '../src/storage';
 import { getDbPath } from '../src/config';
+import { MemoryService } from '../src/memory';
 import { ToolHandler } from '../src/mcp';
 
 function createTempDir(): string {
@@ -41,6 +42,7 @@ describe('ToolHandler.execute', () => {
 
   afterEach(() => {
     handler.close();
+    MemoryService.closeForGraphPath(getDbPath(tempDir));
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -183,5 +185,62 @@ describe('ToolHandler.execute', () => {
     const first = await handler.execute('cgraph_search', { query: 'alpha' });
     const second = await handler.execute('cgraph_search', { query: 'alpha' });
     expect(second.content[0].text).toBe(first.content[0].text);
+  });
+
+  it('supports memory write/query tools with deterministic JSON output', async () => {
+    await handler.execute('cgraph_memory_register_principal', {
+      principalId: 'agent.mcp.memory',
+      trustTier: 'trusted',
+      namespaces: 'workspace',
+    });
+
+    const write = await handler.execute('cgraph_memory_write', {
+      principalId: 'agent.mcp.memory',
+      namespace: 'workspace',
+      subjectKey: 'mcp-memory',
+      payload: { hello: 'world' },
+      idempotencyKey: 'mcp-memory-write',
+      format: 'json',
+    });
+    const writeJson = JSON.parse(write.content[0].text) as { ok: boolean; versionId: string };
+    expect(writeJson.ok).toBe(true);
+
+    const query = await handler.execute('cgraph_memory_query', {
+      namespace: 'workspace',
+      subjectKey: 'mcp-memory',
+      principalId: 'agent.mcp.memory',
+      nowMs: Date.now(),
+      format: 'json',
+    });
+    const queryJson = JSON.parse(query.content[0].text) as { total: number; results: Array<{ versionId: string }> };
+    expect(queryJson.total).toBeGreaterThanOrEqual(1);
+    expect(queryJson.results[0].versionId).toBe(writeJson.versionId);
+  });
+
+  it('returns migration governance report through memory migration tool', async () => {
+    const report = await handler.execute('cgraph_memory_migration_report', {});
+    const json = JSON.parse(report.content[0].text) as {
+      totalLegacyNodes: number;
+      importedLegacyRecords: number;
+      parityMismatches: number;
+    };
+    expect(typeof json.totalLegacyNodes).toBe('number');
+    expect(typeof json.importedLegacyRecords).toBe('number');
+    expect(typeof json.parityMismatches).toBe('number');
+  });
+
+  it('revokes memory principals and exposes audit-derived memory metrics', async () => {
+    await handler.execute('cgraph_memory_register_principal', {
+      principalId: 'agent.mcp.revoked', trustTier: 'trusted', namespaces: 'workspace',
+    });
+    const revoke = await handler.execute('cgraph_memory_revoke_principal', {
+      principalId: 'agent.mcp.revoked', reason: 'test', nowMs: 1,
+    });
+    expect(JSON.parse(revoke.content[0].text).status).toBe('revoked');
+
+    const metrics = await handler.execute('cgraph_memory_metrics', {});
+    const json = JSON.parse(metrics.content[0].text) as { operations: Record<string, number>; activeVersions: number };
+    expect(json.operations.revoke).toBeGreaterThanOrEqual(1);
+    expect(typeof json.activeVersions).toBe('number');
   });
 });

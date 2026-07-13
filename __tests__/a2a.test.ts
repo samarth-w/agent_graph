@@ -3,8 +3,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { getAgentCard, handleA2ARpcRequest } from '../src/a2a';
+import { PassThrough } from 'stream';
+import { getAgentCard, handleA2ARpcRequest, readJsonBody, startA2AServer } from '../src/a2a';
 import { GraphDB } from '../src/storage';
+import { MemoryService } from '../src/memory';
 import { getDbPath } from '../src/config';
 
 function createTempDir(): string {
@@ -19,6 +21,7 @@ describe('A2A adapter skeleton', () => {
   });
 
   afterEach(() => {
+    MemoryService.closeForGraphPath(getDbPath(tempDir));
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -151,6 +154,197 @@ describe('A2A adapter skeleton', () => {
     expect(result.nodes.some((n: any) => n.name === 'agentQueryNode')).toBe(true);
   });
 
+  it('persists concurrent write_node requests without dropping records', async () => {
+    const writes = Array.from({ length: 25 }, (_, i) => handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: `concurrent-${i}`,
+      method: 'write_node',
+      params: {
+        agent_id: 'agent.concurrent',
+        name: `concurrentNode${i}`,
+        qualified_name: `a2a/concurrent::node${i}`,
+      },
+    }));
+
+    const responses = await Promise.all(writes);
+    expect(responses.every(r => !r.error)).toBe(true);
+
+    const db = await GraphDB.open(getDbPath(tempDir));
+    try {
+      for (let i = 0; i < 25; i++) {
+        const node = db.findNodeByQName(`a2a/concurrent::node${i}`);
+        expect(node).toBeDefined();
+      }
+    } finally {
+      db.close();
+    }
+  }, 15_000);
+
+  it('rejects read endpoints when an auth token is configured but the header is missing', async () => {
+    fs.writeFileSync(path.join(tempDir, '.cgraph.json'), JSON.stringify({ a2a: { authToken: 'demo-secret' } }));
+
+    const response = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'auth-missing',
+      method: 'query_by_agent',
+      params: { agent_id: 'agent.auth' },
+    });
+
+    expect(response.error).toBeDefined();
+    expect(response.error?.message).toContain('Authentication required');
+  });
+
+  it('accepts read endpoints when the matching auth token header is provided', async () => {
+    fs.writeFileSync(path.join(tempDir, '.cgraph.json'), JSON.stringify({ a2a: { authToken: 'demo-secret' } }));
+
+    const response = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'auth-present',
+      method: 'query_by_agent',
+      params: { agent_id: 'agent.auth' },
+    }, {
+      headers: { 'x-cgraph-a2a-token': 'demo-secret' },
+    });
+
+    expect(response.error).toBeUndefined();
+    const result = response.result as any;
+    expect(result.agent_id).toBe('agent.auth');
+    expect(result.count).toBe(0);
+  });
+
+  it('revoke_agent marks a registration as revoked and future writes carry revoked trust status', async () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const claim = JSON.stringify({ capabilities: ['write_node'], scope: 'revoke' });
+    const signature = crypto.sign(null, Buffer.from(claim, 'utf-8'), privateKey).toString('base64');
+    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+    await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'reg-revoke',
+      method: 'register_agent',
+      params: {
+        agent_id: 'agent.revoke',
+        claim,
+        signature,
+        public_key: publicKeyPem,
+      },
+    });
+
+    const revoked = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'revoke-1',
+      method: 'revoke_agent',
+      params: {
+        agent_id: 'agent.revoke',
+        reason: 'security_event',
+      },
+    });
+    expect(revoked.error).toBeUndefined();
+    expect((revoked.result as any).trust_status).toBe('revoked');
+
+    const writeAfterRevoke = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'write-after-revoke',
+      method: 'write_node',
+      params: {
+        agent_id: 'agent.revoke',
+        name: 'revokedNode',
+      },
+    });
+
+    expect(writeAfterRevoke.error).toBeUndefined();
+    expect((writeAfterRevoke.result as any).trust_status).toBe('revoked');
+  });
+
+  it('marks registration as expired after registration TTL elapses', async () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const claim = JSON.stringify({ capabilities: ['write_node'], scope: 'ttl' });
+    const signature = crypto.sign(null, Buffer.from(claim, 'utf-8'), privateKey).toString('base64');
+    const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+
+    const registered = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'reg-ttl',
+      method: 'register_agent',
+      params: {
+        agent_id: 'agent.ttl',
+        claim,
+        signature,
+        public_key: publicKeyPem,
+        registration_ttl_ms: 1,
+      },
+    }, {
+      nowMs: 1000,
+    });
+    expect(registered.error).toBeUndefined();
+
+    const writeAfterExpiry = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'write-after-expiry',
+      method: 'write_node',
+      params: {
+        agent_id: 'agent.ttl',
+        name: 'ttlNode',
+      },
+    }, {
+      nowMs: 1002,
+    });
+
+    expect(writeAfterExpiry.error).toBeUndefined();
+    expect((writeAfterExpiry.result as any).trust_status).toBe('expired');
+  });
+
+  it('enforces configured request rate limits per client key', async () => {
+    fs.writeFileSync(path.join(tempDir, '.cgraph.json'), JSON.stringify({
+      a2a: {
+        rateLimitMaxRequests: 2,
+        rateLimitWindowMs: 1000,
+      },
+    }));
+
+    const first = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'rl-1',
+      method: 'a2a.discover',
+    }, { clientKey: 'test-client', nowMs: 10 });
+    expect(first.error).toBeUndefined();
+
+    const second = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'rl-2',
+      method: 'a2a.discover',
+    }, { clientKey: 'test-client', nowMs: 20 });
+    expect(second.error).toBeUndefined();
+
+    const third = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'rl-3',
+      method: 'a2a.discover',
+    }, { clientKey: 'test-client', nowMs: 30 });
+
+    expect(third.error).toBeDefined();
+    expect(third.error?.code).toBe(-32029);
+    expect(third.error?.message).toContain('Rate limit exceeded');
+  });
+
+  it('rejects oversized JSON request bodies', async () => {
+    const stream = new PassThrough();
+    const hugePayload = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'a2a.discover',
+      params: {
+        payload: 'x'.repeat(2 * 1024 * 1024),
+      },
+    });
+
+    const promise = readJsonBody(stream as any, 1024);
+    stream.write(hugePayload);
+    stream.end();
+
+    await expect(promise).rejects.toThrow('Request body too large');
+  });
+
   it('returns method-not-found for unknown RPC methods', async () => {
     const response = await handleA2ARpcRequest(tempDir, {
       jsonrpc: '2.0',
@@ -257,6 +451,7 @@ describe('A2A adapter skeleton', () => {
   });
 
   it('write_node can use per_write trust mode with valid inline signature', async () => {
+    fs.writeFileSync(path.join(tempDir, '.cgraph.json'), JSON.stringify({ a2a: { maxVerifyLatencyMs: 10_000 } }));
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
     const claim = JSON.stringify({ capabilities: ['write_node'], scope: 'inline' });
     const signature = crypto.sign(null, Buffer.from(claim, 'utf-8'), privateKey).toString('base64');

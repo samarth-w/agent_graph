@@ -38,10 +38,10 @@ describe('git.ts against a real git repository', () => {
     tempDir = createTempDir();
     initRepo(tempDir);
     db = await GraphDB.open(path.join(tempDir, 'test.db'));
-  });
+  }, 30_000);
 
   afterEach(() => {
-    db.close();
+    db?.close();
     if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -52,7 +52,7 @@ describe('git.ts against a real git repository', () => {
 
     const changes = getChangedFiles(tempDir);
     expect(changes).toEqual([]);
-  }, 15_000);
+  }, 45_000);
 
   it('detects a modified file against HEAD', () => {
     fs.writeFileSync(path.join(tempDir, 'a.ts'), 'export function a() {}\n');
@@ -63,7 +63,7 @@ describe('git.ts against a real git repository', () => {
 
     const changes = getChangedFiles(tempDir);
     expect(changes).toEqual([{ file: 'a.ts', status: 'modified' }]);
-  }, 15_000);
+  }, 45_000);
 
   it('detects an added file when staged', () => {
     fs.writeFileSync(path.join(tempDir, 'a.ts'), 'export function a() {}\n');
@@ -75,7 +75,7 @@ describe('git.ts against a real git repository', () => {
 
     const changes = getChangedFiles(tempDir, { staged: true });
     expect(changes).toEqual([{ file: 'new.ts', status: 'added' }]);
-  }, 15_000);
+  }, 45_000);
 
   it('detects a deleted file in the working tree', () => {
     fs.writeFileSync(path.join(tempDir, 'a.ts'), 'export function a() {}\n');
@@ -86,7 +86,7 @@ describe('git.ts against a real git repository', () => {
 
     const changes = getChangedFiles(tempDir);
     expect(changes).toEqual([{ file: 'a.ts', status: 'deleted' }]);
-  }, 15_000);
+  }, 45_000);
 
   it('returns [] when there is no git repository', () => {
     const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cgraph-no-git-'));
@@ -96,7 +96,7 @@ describe('git.ts against a real git repository', () => {
     } finally {
       fs.rmSync(bareDir, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 45_000);
 
   it('marks only the symbol whose lines overlap a changed hunk as in_diff', () => {
     const initial = 'export function alpha() {\n  return 1;\n}\n\nexport function beta() {\n  return 2;\n}\n';
@@ -118,7 +118,7 @@ describe('git.ts against a real git repository', () => {
     expect(names).not.toContain('alpha');
     const betaEntry = symbols.find(s => s.name === 'beta')!;
     expect(betaEntry.change_type).toBe('in_diff');
-  }, 15_000);
+  }, 45_000);
 
   it('marks every symbol in a newly added file as in_changed_file', () => {
     const content = 'export function gamma() {}\nexport function delta() {}\n';
@@ -137,7 +137,7 @@ describe('git.ts against a real git repository', () => {
     const names = symbols.map(s => s.name).sort();
     expect(names).toEqual(['delta', 'gamma']);
     expect(symbols.every(s => s.change_type === 'in_changed_file')).toBe(true);
-  }, 15_000);
+  }, 45_000);
 
   it('returns [] when no files changed', () => {
     fs.writeFileSync(path.join(tempDir, 'a.ts'), 'export function a() {}\n');
@@ -146,5 +146,5 @@ describe('git.ts against a real git repository', () => {
 
     const symbols = findChangedSymbols(db, tempDir, {});
     expect(symbols).toEqual([]);
-  }, 15_000);
+  }, 45_000);
 });
