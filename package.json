@@ -22,7 +22,10 @@
     "benchmark:memory": "node ./scripts/benchmark-memory.mjs",
     "benchmark:memory:soak": "node ./scripts/benchmark-memory-soak.mjs",
     "check:memory": "node ./scripts/check-memory-budget.mjs",
-    "verify": "npm run build && npm run test:coverage && npm run check:performance && npm run check:memory"
+    "corpus:invalidation": "node ./scripts/gen-invalidation-corpus.mjs",
+    "eval:invalidation": "node ./scripts/eval-invalidation.mjs --pretty",
+    "check:invalidation": "node ./scripts/check-invalidation-budget.mjs",
+    "verify": "npm run build && npm run test:coverage && npm run check:performance && npm run check:memory && npm run check:invalidation"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -35,7 +38,9 @@
     "better-sqlite3": "^12.11.1",
     "commander": "^12.0.0",
     "fast-glob": "^3.3.0",
-    "sql.js": "^1.11.0"
+    "sql.js": "^1.11.0",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.22.6"
   },
   "devDependencies": {
     "@types/babel__generator": "^7.27.0",

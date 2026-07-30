@@ -168,6 +168,57 @@ describe('persistent memory service', () => {
     expect(result.results[0].scoreComponents.adaptive).toBe(1);
   });
 
+  it('records provenance metadata and marks affected versions stale when evidence changes', async () => {
+    const db = await GraphDB.open(getDbPath(tempDir));
+    const service = new MemoryService(db);
+    service.registerPrincipal({ principalId: 'agent.provenance', trustTier: 'trusted' });
+
+    const written = service.writeMemory({
+      principalId: 'agent.provenance',
+      namespace: 'project',
+      subjectKey: 'provenance',
+      memoryType: 'fact',
+      payload: { note: 'depends on file' },
+      confidence: 0.8,
+      evidence: [{
+        sourceType: 'file',
+        sourceRef: 'src/feature.ts',
+        excerptHash: 'hash-1',
+        metadata: { kind: 'file', target: 'src/feature.ts', codeHash: 'hash-1' },
+      }],
+    });
+    expect(written.ok).toBe(true);
+
+    const invalidated = service.invalidateByChange({
+      sourceType: 'file',
+      sourceRef: 'src/feature.ts',
+      reason: 'repo changed',
+      nowMs: Date.now(),
+    });
+    expect(invalidated.invalidatedCount).toBe(1);
+
+    const affected = service.listAffectedMemories({
+      sourceType: 'file',
+      sourceRef: 'src/feature.ts',
+      limit: 10,
+    });
+    expect(affected.affectedCount).toBe(1);
+    expect(affected.affected[0].versionId).toBe(written.versionId);
+
+    const revalidated = service.revalidateMemory({
+      versionId: written.versionId!,
+      reason: 'rechecked after change',
+      nowMs: Date.now(),
+    });
+    expect(revalidated.ok).toBe(true);
+    expect(revalidated.status).toBe('active');
+
+    const query = service.queryMemory({ namespace: 'project', subjectKey: 'provenance' });
+    expect(query.results[0].status).toBe('active');
+    expect(query.results[0].policyWarnings).not.toContain('stale');
+    expect(query.results[0].evidenceRefs[0].metadata?.target).toBe('src/feature.ts');
+  });
+
   it('rejects revoked, expired, and evidence-empty candidates by default with explainable scores', async () => {
     const db = await GraphDB.open(getDbPath(tempDir));
     const service = new MemoryService(db);

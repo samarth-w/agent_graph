@@ -38,8 +38,12 @@ CREATE TABLE IF NOT EXISTS nodes (
   signature      TEXT,
   doc            TEXT,
   exported       INTEGER NOT NULL DEFAULT 0,
-  role           TEXT
+  role           TEXT,
+  fingerprint    TEXT,
+  fingerprint_level INTEGER
 );
+
+CREATE INDEX IF NOT EXISTS idx_nodes_fingerprint ON nodes(fingerprint);
 
 CREATE INDEX IF NOT EXISTS idx_nodes_file_qname
   ON nodes(file_id, qualified_name);
@@ -300,7 +304,20 @@ export class GraphDB {
 
   private ensureMigrations(): void {
     this.ensureEdgeCostColumns();
+    this.ensureNodeFingerprintColumns();
     this.exec(MEMORY_SCHEMA);
+  }
+
+  private ensureNodeFingerprintColumns(): void {
+    const cols = this.all('PRAGMA table_info(nodes)');
+    const names = new Set(cols.map((c: any) => String(c.name)));
+    if (!names.has('fingerprint')) {
+      this.exec('ALTER TABLE nodes ADD COLUMN fingerprint TEXT');
+    }
+    if (!names.has('fingerprint_level')) {
+      this.exec('ALTER TABLE nodes ADD COLUMN fingerprint_level INTEGER');
+    }
+    this.exec('CREATE INDEX IF NOT EXISTS idx_nodes_fingerprint ON nodes(fingerprint)');
   }
 
   private ensureEdgeCostColumns(): void {
@@ -484,6 +501,8 @@ export class GraphDB {
     startLine: number, endLine: number,
     signature: string | null, doc: string | null,
     exported: boolean,
+    fingerprint: string | null = null,
+    fingerprintLevel: number | null = null,
   ): number {
     this.run(
       'DELETE FROM nodes WHERE file_id = ? AND qualified_name = ?',
@@ -492,10 +511,10 @@ export class GraphDB {
     this.invalidateIndex();
     return this.run(
       `INSERT INTO nodes
-        (file_id,name,qualified_name,kind,start_line,end_line,signature,doc,exported)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+        (file_id,name,qualified_name,kind,start_line,end_line,signature,doc,exported,fingerprint,fingerprint_level)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [fileId, name, qualifiedName, kind, startLine, endLine,
-       signature, doc, exported ? 1 : 0],
+       signature, doc, exported ? 1 : 0, fingerprint, fingerprintLevel],
     );
   }
 

@@ -7,14 +7,20 @@ import type {
   MemoryMigrationReport,
   MemoryMetrics,
   MemoryAutoResolutionResult,
+  MemoryChangeImpactResult,
+  MemoryInvalidationInput,
+  MemoryInvalidationResult,
   MemoryObservability,
   MemoryPrincipalInput,
   MemoryPrincipalSnapshot,
   MemoryQueryInput,
   MemoryQueryResult,
   MemoryRevocationInput,
+  MemoryRevalidationInput,
+  MemoryRevalidationResult,
   MemoryWriteInput,
   MemoryWriteResult,
+  SymbolFingerprint,
 } from './types';
 import { GraphDB } from './storage';
 import { NativeMemoryStore } from './memory-store';
@@ -80,6 +86,30 @@ export class MemoryService {
 
   autoResolveConflicts(input: { minimumMargin?: number } = {}): MemoryAutoResolutionResult {
     return this.store.autoResolveConflicts(input);
+  }
+
+  invalidateByChange(input: MemoryInvalidationInput): MemoryInvalidationResult {
+    return this.store.invalidateByChange(input);
+  }
+
+  invalidateBySources(sourceRefs: string[], reason: string, nowMs?: number): MemoryInvalidationResult {
+    return this.store.invalidateBySources(sourceRefs, reason, nowMs);
+  }
+
+  getSymbolFingerprints(): Map<string, SymbolFingerprint> {
+    return this.store.getSymbolFingerprints();
+  }
+
+  replaceSymbolFingerprints(entries: SymbolFingerprint[], nowMs?: number): void {
+    this.store.replaceSymbolFingerprints(entries, nowMs);
+  }
+
+  listAffectedMemories(input: MemoryInvalidationInput & { limit?: number } = {}): MemoryChangeImpactResult {
+    return this.store.listAffectedMemories(input);
+  }
+
+  revalidateMemory(input: MemoryRevalidationInput): MemoryRevalidationResult {
+    return this.store.revalidateMemory(input);
   }
 
   recordTrace(input: { operation: string; durationMs: number; status: 'ok' | 'error'; attributes?: Record<string, unknown> }): void {

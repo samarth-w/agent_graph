@@ -17,6 +17,8 @@ import { DEFAULT_CONFIG, detectLanguage, getDbPath, loadConfig } from './config'
 import { extractRoutes } from './frameworks';
 import { synthesizeEdges } from './synthesizer';
 import { buildIgnoreFilter } from './gitignore';
+import { coerceFingerprintLevel, type FingerprintLevel } from './fingerprint';
+import { initTreeSitter } from './treesitter';
 import type { ParsedSymbol, ParsedCall, ParsedImport, GraphConfig, ParsedRoute } from './types';
 
 export interface IndexResult {
@@ -83,16 +85,21 @@ function collectPendingFiles(
 /** Phase 3: parse files — parallel for large batches, serial for small ones */
 async function executeParsePhase(
   pending: PendingFile[],
+  fingerprintLevel: FingerprintLevel,
 ): Promise<Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }>> {
   const WORKER_THRESHOLD = 8;
   const parseResults: Map<number, { fileId: number; relNorm: string; content: string; result: ReturnType<typeof parseFile> }> = new Map();
 
+  // Loading the WASM grammars is async but parsing is not, so the runtime has
+  // to be ready before any parseFile call. Workers initialize independently.
+  if (fingerprintLevel >= 3) await initTreeSitter();
+
   if (pending.length >= WORKER_THRESHOLD) {
-    const results = await parseFilesParallel(pending);
+    const results = await parseFilesParallel(pending, fingerprintLevel);
     for (const r of results) parseResults.set(r.fileId, r);
   } else {
     for (const p of pending) {
-      const result = parseFile(p.content, p.language, p.relNorm);
+      const result = parseFile(p.content, p.language, p.relNorm, { fingerprintLevel });
       parseResults.set(p.fileId, { fileId: p.fileId, relNorm: p.relNorm, content: p.content, result });
     }
   }
@@ -159,7 +166,8 @@ export async function indexProject(
     const { pending, filesChanged } = collectPendingFiles(db, rootDir, filePaths, opts);
 
     const allParseData: Map<number, { calls: ParsedCall[]; imports: ParsedImport[]; symbols: ParsedSymbol[]; relPath: string }> = new Map();
-    const parseResults = await executeParsePhase(pending);
+    const fingerprintLevel = coerceFingerprintLevel(cfg.memory?.fingerprintLevel);
+    const parseResults = await executeParsePhase(pending, fingerprintLevel);
     storeParsePhase(db, parseResults, allParseData);
     resolveAndClassify(db, rootDir, [...parseResults.keys()], filePaths, opts);
 
@@ -186,6 +194,7 @@ function storeSymbols(db: GraphDB, fileId: number, symbols: ParsedSymbol[]): voi
       fileId, sym.name, sym.qualifiedName, sym.kind,
       sym.startLine, sym.endLine,
       sym.signature, sym.doc, sym.exported,
+      sym.fingerprint ?? null, sym.fingerprintLevel ?? null,
     );
     if (sym.children.length > 0) storeSymbols(db, fileId, sym.children);
   }
@@ -498,7 +507,10 @@ interface ParsedFileResult {
   result: ReturnType<typeof parseFile>;
 }
 
-async function parseFilesParallel(files: PendingFile[]): Promise<ParsedFileResult[]> {
+async function parseFilesParallel(
+  files: PendingFile[],
+  fingerprintLevel: FingerprintLevel,
+): Promise<ParsedFileResult[]> {
   const cpuCount = Math.max(1, os.cpus().length - 1);
   const workerCount = Math.min(cpuCount, files.length, 4);
 
@@ -511,7 +523,7 @@ async function parseFilesParallel(files: PendingFile[]): Promise<ParsedFileResul
       fileId: f.fileId,
       relNorm: f.relNorm,
       content: f.content,
-      result: parseFile(f.content, f.language, f.relNorm),
+      result: parseFile(f.content, f.language, f.relNorm, { fingerprintLevel }),
     }));
   }
 
@@ -532,6 +544,7 @@ async function parseFilesParallel(files: PendingFile[]): Promise<ParsedFileResul
         content: item.content,
         language: item.language,
         relPath: item.relNorm,
+        fingerprintLevel,
       });
     };
 
@@ -569,7 +582,7 @@ async function parseFilesParallel(files: PendingFile[]): Promise<ParsedFileResul
           fileId: item.fileId,
           relNorm: item.relNorm,
           content: item.content,
-          result: parseFile(item.content, item.language, item.relNorm),
+          result: parseFile(item.content, item.language, item.relNorm, { fingerprintLevel }),
         });
       }
       resolve();

@@ -3,11 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import Database from 'better-sqlite3';
 import type {
-  MemoryBackfillResult, MemoryCompactionResult, MemoryConflict, MemoryConflictResult, MemoryEvidenceInput,
+  MemoryBackfillResult, MemoryCompactionResult, MemoryChangeImpactResult, MemoryConflict, MemoryConflictResult, MemoryEvidenceInput,
   MemoryConfig,
   MemoryExpiryResult, MemoryPrincipalInput, MemoryPrincipalSnapshot, MemoryQueryEntry, MemoryQueryInput,
-  MemoryQueryResult, MemoryRevocationInput, MemoryScoreComponents, MemoryStatus, MemoryType, MemoryWriteInput, MemoryWriteResult,
-  MemoryMigrationReport, MemoryMetrics, MemoryAutoResolutionResult, MemoryObservability,
+  MemoryQueryResult, MemoryRevocationInput, MemoryRevalidationInput, MemoryRevalidationResult, MemoryScoreComponents, MemoryStatus, MemoryType, MemoryWriteInput, MemoryWriteResult,
+  MemoryMigrationReport, MemoryMetrics, MemoryAutoResolutionResult, MemoryInvalidationInput, MemoryInvalidationResult, MemoryObservability,
+  SymbolFingerprint,
 } from './types';
 import { GraphDB } from './storage';
 import { loadConfig } from './config';
@@ -29,12 +30,12 @@ CREATE TABLE IF NOT EXISTS memory_versions (
   version_id TEXT PRIMARY KEY, memory_id TEXT NOT NULL, payload_json TEXT NOT NULL,
   payload_hash TEXT NOT NULL, confidence REAL NOT NULL, evidence_ref_count INTEGER NOT NULL DEFAULT 0,
   valid_from INTEGER NOT NULL, valid_to INTEGER, supersedes_version_id TEXT, created_at INTEGER NOT NULL,
-  status TEXT NOT NULL, idempotency_key TEXT
+  status TEXT NOT NULL, idempotency_key TEXT, status_reason TEXT, invalidated_at INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_idempotency ON memory_versions(memory_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS memory_evidence (
   evidence_id TEXT PRIMARY KEY, version_id TEXT NOT NULL, source_type TEXT NOT NULL,
-  source_ref TEXT NOT NULL, excerpt_hash TEXT, captured_at INTEGER NOT NULL
+  source_ref TEXT NOT NULL, excerpt_hash TEXT, captured_at INTEGER NOT NULL, metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS memory_conflicts (
   conflict_id TEXT PRIMARY KEY, left_version_id TEXT NOT NULL, right_version_id TEXT NOT NULL,
@@ -47,6 +48,11 @@ CREATE TABLE IF NOT EXISTS memory_access_log (
 CREATE TABLE IF NOT EXISTS memory_rate_limits (bucket_key TEXT PRIMARY KEY, window_start INTEGER NOT NULL, request_count INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS memory_feedback (feedback_id TEXT PRIMARY KEY, version_id TEXT NOT NULL, principal_id TEXT, relevance REAL NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS memory_operation_traces (trace_id TEXT PRIMARY KEY, operation TEXT NOT NULL, duration_ms REAL NOT NULL, status TEXT NOT NULL, attributes_json TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS memory_symbol_fingerprints (
+  qualified_name TEXT PRIMARY KEY, file_path TEXT NOT NULL, fingerprint TEXT NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_fingerprints_file ON memory_symbol_fingerprints(file_path);
+CREATE INDEX IF NOT EXISTS idx_evidence_source_ref ON memory_evidence(source_ref);
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_records(namespace, subject_key, status);
 CREATE INDEX IF NOT EXISTS idx_versions_memory_time ON memory_versions(memory_id, created_at DESC);
 `;
@@ -81,6 +87,13 @@ export class NativeMemoryStore {
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
     db.exec(SCHEMA);
+    for (const [sql, message] of [
+      ["ALTER TABLE memory_versions ADD COLUMN status_reason TEXT", 'status_reason'],
+      ["ALTER TABLE memory_versions ADD COLUMN invalidated_at INTEGER", 'invalidated_at'],
+      ["ALTER TABLE memory_evidence ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'", 'metadata_json'],
+    ] as Array<[string, string]>) {
+      try { db.prepare(sql).run(); } catch (error: any) { const message = String(error?.message ?? error); if (!/duplicate column name/i.test(message)) throw error; }
+    }
     db.prepare('INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?,?)').run(SCHEMA_VERSION, Date.now());
     const rootDir = path.dirname(path.dirname(graph.dbPath));
     const store = new NativeMemoryStore(db, graph, rootDir);
@@ -205,7 +218,7 @@ export class NativeMemoryStore {
   }
 
   private addEvidence(versionId: string, evidence: MemoryEvidenceInput, now: number): void {
-    this.db.prepare('INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), versionId, evidence.sourceType, evidence.sourceRef, evidence.excerptHash ?? null, evidence.capturedAtMs ?? now);
+    this.db.prepare('INSERT INTO memory_evidence VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(), versionId, evidence.sourceType, evidence.sourceRef, evidence.excerptHash ?? null, evidence.capturedAtMs ?? now, JSON.stringify(evidence.metadata ?? {}));
   }
 
   queryMemory(input: MemoryQueryInput): MemoryQueryResult {
@@ -224,16 +237,16 @@ export class NativeMemoryStore {
       const expired = row.status === 'expired' || (row.valid_to && Number(row.valid_to) <= now); const superseded = row.status === 'superseded';
       if (!principal || principal.status === 'revoked' || (!input.includeExpired && expired) || (!input.includeSuperseded && superseded) || (input.requireEvidence && row.evidence_ref_count === 0)) continue;
       const trust = principal.trust_tier === 'trusted' ? 1 : principal.trust_tier === 'neutral' ? .6 : .3;
-      const recency = Math.max(.1, 1 - Math.min(1, (now - Number(row.created_at)) / 604800000)); const confidence = Number(row.confidence); const evidence = Math.min(1, Number(row.evidence_ref_count) / 2); const penalty = expired ? .45 : 0;
+      const recency = Math.max(.1, 1 - Math.min(1, (now - Number(row.created_at)) / 604800000)); const confidence = Number(row.confidence); const evidence = Math.min(1, Number(row.evidence_ref_count) / 2); const stale = row.status === 'stale' || row.status === 'needs_revalidation' || row.status === 'contradicted'; const penalty = expired || stale ? .45 : 0;
       const semantic = input.semanticQuery ? tokenSimilarity(input.semanticQuery, `${row.subject_key} ${row.payload_json}`) : 0;
       const feedbackRow = this.db.prepare('SELECT AVG(relevance) AS relevance FROM memory_feedback WHERE version_id=?').get(row.version_id) as { relevance?: number | null } | undefined;
       const adaptive = feedbackRow?.relevance === null || feedbackRow?.relevance === undefined ? 0.5 : Math.max(0, Math.min(1, Number(feedbackRow.relevance)));
       const hybridEnabled = this.getConfig().hybridRankingEnabled === true;
       const scoreComponents: MemoryScoreComponents = { trust, recency, confidence, evidence, penalty, ...(hybridEnabled ? { semantic, adaptive } : {}) };
-      const evidenceRefs = this.db.prepare('SELECT source_type,source_ref,excerpt_hash FROM memory_evidence WHERE version_id=? ORDER BY captured_at,evidence_id').all(row.version_id).map((e: any) => ({ sourceType: e.source_type, sourceRef: e.source_ref, ...(e.excerpt_hash ? { excerptHash: e.excerpt_hash } : {}) }));
+      const evidenceRefs = this.db.prepare('SELECT source_type,source_ref,excerpt_hash,metadata_json FROM memory_evidence WHERE version_id=? ORDER BY captured_at,evidence_id').all(row.version_id).map((e: any) => ({ sourceType: e.source_type, sourceRef: e.source_ref, ...(e.excerpt_hash ? { excerptHash: e.excerpt_hash } : {}), ...(e.metadata_json ? { metadata: parseMetadata(e.metadata_json) } : {}) }));
       const baseScore = .35 * trust + .25 * recency + .2 * confidence + .2 * evidence - penalty;
       const score = hybridEnabled ? (.8 * baseScore + .15 * semantic + .05 * adaptive) : baseScore;
-      results.push({ memoryId: row.memory_id, versionId: row.version_id, namespace: row.namespace, subjectKey: row.subject_key, memoryType: row.memory_type as MemoryType, payload: JSON.parse(row.payload_json), confidence, status: row.status as MemoryStatus, score, scoreComponents, evidenceCount: row.evidence_ref_count, createdAt: row.created_at, policyWarnings: [ ...(expired ? ['expired'] : []), ...(row.evidence_ref_count === 0 ? ['low evidence'] : []) ], acceptedRules: ['principal active', 'validity accepted', ...(row.evidence_ref_count ? ['evidence present'] : []), ...(hybridEnabled ? ['hybrid semantic policy'] : [])], evidenceRefs });
+      results.push({ memoryId: row.memory_id, versionId: row.version_id, namespace: row.namespace, subjectKey: row.subject_key, memoryType: row.memory_type as MemoryType, payload: JSON.parse(row.payload_json), confidence, status: row.status as MemoryStatus, score, scoreComponents, evidenceCount: row.evidence_ref_count, createdAt: row.created_at, policyWarnings: [ ...(expired ? ['expired'] : []), ...(stale ? ['stale'] : []), ...(row.evidence_ref_count === 0 ? ['low evidence'] : []) ], acceptedRules: ['principal active', 'validity accepted', ...(row.evidence_ref_count ? ['evidence present'] : []), ...(hybridEnabled ? ['hybrid semantic policy'] : [])], evidenceRefs });
     }
     results.sort((a,b) => b.score-a.score || b.scoreComponents.trust-a.scoreComponents.trust || b.createdAt-a.createdAt || a.versionId.localeCompare(b.versionId));
     this.log(input.principalId, 'query', `${input.namespace}:${input.subjectKey}`);
@@ -266,6 +279,111 @@ export class NativeMemoryStore {
     this.log(undefined, 'auto_resolve');
     return { resolvedCount, unresolvedCount: conflicts.length - resolvedCount, conflictIds };
   }
+  invalidateByChange(input: MemoryInvalidationInput): MemoryInvalidationResult {
+    const now = input.nowMs ?? Date.now();
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (input.sourceType) { clauses.push('me.source_type=?'); params.push(input.sourceType); }
+    if (input.sourceRef) { clauses.push('me.source_ref=?'); params.push(input.sourceRef); }
+    if (input.sourceHash) { clauses.push('me.excerpt_hash=?'); params.push(input.sourceHash); }
+
+    const whereClause = clauses.length > 0
+      ? `WHERE ${clauses.join(' AND ')} AND mv.status='active'`
+      : `WHERE mv.status='active'`;
+    const rows = this.db.prepare(`SELECT DISTINCT mv.version_id FROM memory_versions mv JOIN memory_evidence me ON me.version_id=mv.version_id ${whereClause}`).all(...params) as Array<{ version_id: string }>;
+    const versionIds = rows.map((row) => row.version_id);
+    const update = this.db.transaction(() => {
+      for (const versionId of versionIds) {
+        this.db.prepare("UPDATE memory_versions SET status='stale', status_reason=?, invalidated_at=? WHERE version_id=? AND status='active'").run(input.reason ?? 'evidence_changed', now, versionId);
+      }
+    });
+    update();
+    this.log(undefined, 'invalidate', input.sourceRef ?? input.sourceType ?? 'change');
+    return { invalidatedCount: versionIds.length, versionIds };
+  }
+
+  listAffectedMemories(input: MemoryInvalidationInput & { limit?: number } = {}): MemoryChangeImpactResult {
+    const limit = input.limit && input.limit > 0 ? input.limit : 50;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (input.sourceType) { clauses.push('me.source_type=?'); params.push(input.sourceType); }
+    if (input.sourceRef) { clauses.push('me.source_ref=?'); params.push(input.sourceRef); }
+    if (input.sourceHash) { clauses.push('me.excerpt_hash=?'); params.push(input.sourceHash); }
+
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = this.db.prepare(`SELECT DISTINCT mv.version_id, mv.memory_id, mv.status, mv.status_reason, mr.namespace, mr.subject_key, mr.memory_type
+      FROM memory_versions mv
+      JOIN memory_records mr ON mr.memory_id = mv.memory_id
+      JOIN memory_evidence me ON me.version_id = mv.version_id
+      ${whereClause}
+      ORDER BY mv.created_at DESC, mv.version_id DESC
+      LIMIT ?`).all(...params, limit) as Array<{ version_id: string; memory_id: string; status: string; status_reason: string | null; namespace: string; subject_key: string; memory_type: string }>;
+
+    const affected = rows.map((row) => ({
+      memoryId: row.memory_id,
+      versionId: row.version_id,
+      namespace: row.namespace,
+      subjectKey: row.subject_key,
+      memoryType: row.memory_type as MemoryType,
+      status: row.status as MemoryStatus,
+      reason: row.status_reason,
+      evidenceRefs: this.db.prepare('SELECT source_type,source_ref,metadata_json FROM memory_evidence WHERE version_id=? ORDER BY captured_at,evidence_id').all(row.version_id).map((e: any) => ({ sourceType: e.source_type, sourceRef: e.source_ref, ...(e.metadata_json ? { metadata: parseMetadata(e.metadata_json) } : {}) })),
+    }));
+    return { affectedCount: affected.length, affected };
+  }
+
+  revalidateMemory(input: MemoryRevalidationInput): MemoryRevalidationResult {
+    const version = this.db.prepare('SELECT version_id, status FROM memory_versions WHERE version_id=?').get(input.versionId) as { version_id: string; status: string } | undefined;
+    if (!version) return { ok: false, versionId: input.versionId, status: 'tombstoned', error: 'Version not found' };
+    this.db.prepare("UPDATE memory_versions SET status='active', status_reason=?, invalidated_at=NULL WHERE version_id=?").run(input.reason ?? 'revalidated', input.versionId);
+    this.log(undefined, 'revalidate', input.versionId);
+    return { ok: true, versionId: input.versionId, status: 'active', reason: input.reason ?? 'revalidated' };
+  }
+
+  /** Read the durable symbol-fingerprint snapshot captured by the last provenance sync. */
+  getSymbolFingerprints(): Map<string, SymbolFingerprint> {
+    const rows = this.db.prepare('SELECT qualified_name, file_path, fingerprint FROM memory_symbol_fingerprints').all() as Array<{ qualified_name: string; file_path: string; fingerprint: string }>;
+    return new Map(rows.map((row) => [row.qualified_name, { qualifiedName: row.qualified_name, filePath: row.file_path, fingerprint: row.fingerprint }]));
+  }
+
+  /** Atomically replace the fingerprint snapshot so a crash cannot leave a partial baseline. */
+  replaceSymbolFingerprints(entries: SymbolFingerprint[], nowMs: number = Date.now()): void {
+    const replace = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM memory_symbol_fingerprints').run();
+      const insert = this.db.prepare('INSERT INTO memory_symbol_fingerprints(qualified_name,file_path,fingerprint,updated_at) VALUES(?,?,?,?)');
+      for (const entry of entries) insert.run(entry.qualifiedName, entry.filePath, entry.fingerprint, nowMs);
+    });
+    this.withBusyRetry(replace);
+  }
+
+  /** Invalidate every active version whose evidence points at any of the supplied source refs. */
+  invalidateBySources(sourceRefs: string[], reason: string, nowMs: number = Date.now()): MemoryInvalidationResult {
+    const unique = [...new Set(sourceRefs.filter((ref) => typeof ref === 'string' && ref.length > 0))];
+    if (unique.length === 0) return { invalidatedCount: 0, versionIds: [] };
+
+    const versionIds = new Set<string>();
+    const CHUNK = 400; // stay well under SQLite's variable limit
+    for (let offset = 0; offset < unique.length; offset += CHUNK) {
+      const chunk = unique.slice(offset, offset + CHUNK);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = this.db.prepare(`SELECT DISTINCT mv.version_id FROM memory_versions mv
+        JOIN memory_evidence me ON me.version_id = mv.version_id
+        WHERE me.source_ref IN (${placeholders}) AND mv.status='active'`).all(...chunk) as Array<{ version_id: string }>;
+      for (const row of rows) versionIds.add(row.version_id);
+    }
+
+    const ids = [...versionIds];
+    if (ids.length > 0) {
+      const update = this.db.transaction(() => {
+        const statement = this.db.prepare("UPDATE memory_versions SET status='stale', status_reason=?, invalidated_at=? WHERE version_id=? AND status='active'");
+        for (const versionId of ids) statement.run(reason, nowMs, versionId);
+      });
+      this.withBusyRetry(update);
+    }
+    this.log(undefined, 'invalidate', reason);
+    return { invalidatedCount: ids.length, versionIds: ids };
+  }
+
   listConflicts(input: { versionId?: string; includeResolved?: boolean } = {}): MemoryConflict[] { const rows = input.versionId ? this.db.prepare(`SELECT * FROM memory_conflicts WHERE (left_version_id=? OR right_version_id=?)${input.includeResolved?'':" AND resolution_state='open'"} ORDER BY created_at,conflict_id`).all(input.versionId,input.versionId) : this.db.prepare(`SELECT * FROM memory_conflicts ${input.includeResolved?'':"WHERE resolution_state='open'"} ORDER BY created_at,conflict_id`).all(); return rows.map((r:any)=>({conflictId:r.conflict_id,leftVersionId:r.left_version_id,rightVersionId:r.right_version_id,conflictType:r.conflict_type,resolutionState:r.resolution_state,winnerVersionId:r.winner_version_id??undefined,createdAt:r.created_at})); }
   expireMemory(input:{nowMs?:number}):MemoryExpiryResult { const now=input.nowMs??Date.now(); const result=this.db.prepare(`UPDATE memory_versions SET status='expired' WHERE status<>'expired' AND valid_to IS NOT NULL AND valid_to<=?`).run(now); this.log(undefined,'expire'); return {expiredCount:result.changes}; }
   compactMemory(input:{nowMs?:number;retentionMs?:number}):MemoryCompactionResult { const now=input.nowMs??Date.now(), retention=input.retentionMs??this.getConfig().defaultRetentionMs??604800000; const result=this.db.prepare(`UPDATE memory_records SET status='tombstoned' WHERE status<>'tombstoned' AND memory_id IN (SELECT DISTINCT memory_id FROM memory_versions WHERE status IN ('expired','revoked') AND created_at<?)`).run(now-retention); this.log(undefined,'compact'); return {tombstonedCount:result.changes}; }

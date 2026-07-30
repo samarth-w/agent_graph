@@ -1,0 +1,15 @@
+{
+  "goldPath": "fixtures/invalidation-gold.json",
+  "fingerprintLevel": 4,
+  "minJudgements": 50000,
+  "minF1": 0.7,
+  "minRecall": 0.99,
+  "minKnowledgeRetentionRate": 0.95,
+  "mustBeatArm": "B2_file_hash",
+  "minF1MarginOverBaseline": 0.3,
+  "_rationale": {
+    "minRecall": "A false negative means an agent keeps a belief that the code no longer supports, so recall is gated far more tightly than precision. It is deliberately not 1.0 because the corpus contains a small number of mutations whose labels are debatable; see the FN analysis in the eval report.",
+    "minKnowledgeRetentionRate": "Share of semantic-preserving edits that do NOT discard knowledge. This is the metric a file-hash baseline scores 0.0 on and is the practical reason the system exists.",
+    "mustBeatArm": "B2_file_hash is what most tooling does today. If we cannot beat it by a wide margin the contribution claim fails."
+  }
+}

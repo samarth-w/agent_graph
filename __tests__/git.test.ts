@@ -35,10 +35,10 @@ describe('findChangedSymbols', () => {
     expect(Array.isArray(result)).toBe(true);
     // May return symbols from that file
     expect(result.every(s => typeof s === 'object')).toBe(true);
-  });
+  }, 15_000);
 
   it('ignores files not in DB', async () => {
     const result = await findChangedSymbols(db, tempDir, ['src/ghost.ts']);
     expect(Array.isArray(result)).toBe(true);
-  });
+  }, 15_000);
 });

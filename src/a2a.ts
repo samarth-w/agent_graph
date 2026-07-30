@@ -2,6 +2,7 @@ import http from 'http';
 import crypto from 'crypto';
 import { GraphDB } from './storage';
 import { MemoryService } from './memory';
+import { syncProvenance } from './provenance';
 import { replicateMemoryWrite } from './memory-replication';
 import { getDbPath, loadConfig } from './config';
 import type { A2AAgentCard, A2ARpcRequest, A2ARpcResponse, EdgeCost, NodeRecord } from './types';
@@ -30,6 +31,38 @@ interface HandleA2ARequestOptions {
   nowMs?: number;
 }
 
+const PROTECTED_A2A_METHODS = new Set([
+  'read_lineage',
+  'query_by_agent',
+  'memory.query',
+  'query_memory',
+  'memory.conflicts',
+  'memory.migration_report',
+  'memory.metrics',
+  'register_agent',
+  'revoke_agent',
+  'write_node',
+  'memory.register_principal',
+  'register_memory_principal',
+  'memory.write',
+  'memory.revise',
+  'write_memory',
+  'revise_memory',
+  'memory.replication.apply',
+  'memory.revoke_principal',
+  'memory.expire',
+  'memory.resolve_conflict',
+  'resolve_memory_conflict',
+  'memory.compact',
+  'compact_memory',
+  'memory.backfill',
+  'memory.feedback',
+  'memory.auto_resolve',
+  'memory.affected',
+  'memory.sync_provenance',
+  'memory.revalidate',
+]);
+
 export function getAgentCard(): A2AAgentCard {
   return {
     name: 'cgraph-a2a-adapter',
@@ -49,6 +82,9 @@ export function getAgentCard(): A2AAgentCard {
       { name: 'memory.metrics', implemented: true, description: 'Return persistent-memory audit and lifecycle metrics.' },
       { name: 'memory.feedback', implemented: true, description: 'Record adaptive-ranking relevance feedback.' },
       { name: 'memory.auto_resolve', implemented: true, description: 'Automatically resolve sufficiently clear conflicts.' },
+      { name: 'memory.affected', implemented: true, description: 'List memory versions affected by evidence or provenance changes.' },
+      { name: 'memory.sync_provenance', implemented: true, description: 'Detect semantic symbol-level code changes and invalidate dependent memories.' },
+      { name: 'memory.revalidate', implemented: true, description: 'Revalidate a stale memory version and restore it to active state.' },
     ],
   };
 }
@@ -202,7 +238,7 @@ function getProvidedAuthToken(headers: Record<string, string | string[] | undefi
 }
 
 function ensureAuthorized(method: string, rootDir: string, requestId: string | number | null | undefined, headers?: Record<string, string | string[] | undefined>): A2ARpcResponse | undefined {
-  if (!['read_lineage', 'query_by_agent', 'memory.query', 'query_memory', 'memory.conflicts', 'memory.migration_report', 'memory.metrics'].includes(method)) return undefined;
+  if (!PROTECTED_A2A_METHODS.has(method)) return undefined;
 
   const expectedToken = getConfiguredA2AAuthToken(rootDir);
   if (!expectedToken) return undefined;
@@ -439,6 +475,40 @@ export async function handleA2ARpcRequest(rootDir: string, request: A2ARpcReques
     const service = new MemoryService(db);
     service.recordFeedback({ versionId: params.version_id, relevance: params.relevance, principalId: typeof params.principal_id === 'string' ? params.principal_id : undefined });
     return rpcResult(request.id, { ok: true });
+  }
+
+  if (request.method === 'memory.affected') {
+    const db = await GraphDB.open(getDbPath(rootDir));
+    const service = new MemoryService(db);
+    return rpcResult(request.id, service.listAffectedMemories({
+      sourceType: typeof request.params?.source_type === 'string' ? request.params.source_type : undefined,
+      sourceRef: typeof request.params?.source_ref === 'string' ? request.params.source_ref : undefined,
+      sourceHash: typeof request.params?.source_hash === 'string' ? request.params.source_hash : undefined,
+      limit: typeof request.params?.limit === 'number' ? request.params.limit : undefined,
+    }));
+  }
+
+  if (request.method === 'memory.sync_provenance') {
+    const params = request.params ?? {};
+    const db = await GraphDB.open(getDbPath(rootDir));
+    return rpcResult(request.id, syncProvenance(db, rootDir, {
+      maxDepth: typeof params.max_depth === 'number' ? params.max_depth : undefined,
+      dryRun: params.dry_run === true,
+      reason: typeof params.reason === 'string' ? params.reason : undefined,
+    }));
+  }
+
+  if (request.method === 'memory.revalidate') {
+    const params = request.params ?? {};
+    const versionId = typeof params.version_id === 'string' && params.version_id.length > 0
+      ? params.version_id
+      : undefined;
+    if (!versionId) {
+      return rpcError(request.id, -32602, 'Invalid params: "version_id" is required.');
+    }
+    const db = await GraphDB.open(getDbPath(rootDir));
+    const service = new MemoryService(db);
+    return rpcResult(request.id, service.revalidateMemory({ versionId, reason: typeof params.reason === 'string' ? params.reason : undefined }));
   }
 
   if (request.method === 'memory.auto_resolve') {

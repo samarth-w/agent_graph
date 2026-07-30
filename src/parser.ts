@@ -13,14 +13,38 @@ import type {
   ImportSpecifier, SymbolKind,
 } from './types';
 import { isJSTS } from './config';
+import {
+  computeFingerprint, DEFAULT_FINGERPRINT_LEVEL, type FingerprintLevel,
+} from './fingerprint';
+import { createFileTree } from './treesitter';
+
+export interface ParseOptions {
+  /** Normalization aggressiveness for symbol fingerprints. */
+  fingerprintLevel?: FingerprintLevel;
+}
 
 // ─── public entry ───────────────────────────────────────────────
 export function parseFile(
   content: string,
   language: string,
   relPath: string,
+  options: ParseOptions = {},
 ): ParseResult {
-  if (isJSTS(language)) return parseJSTS(content, language, relPath);
+  const level = options.fingerprintLevel ?? DEFAULT_FINGERPRINT_LEVEL;
+  const result = parseByLanguage(content, language, relPath, level);
+  // Languages without an AST provider get a text-based fingerprint here.
+  // JS/TS symbols already carry an AST-derived one and are left untouched.
+  applyTextFingerprints(result.symbols, content, language, level);
+  return result;
+}
+
+function parseByLanguage(
+  content: string,
+  language: string,
+  relPath: string,
+  level: FingerprintLevel,
+): ParseResult {
+  if (isJSTS(language)) return parseJSTS(content, language, relPath, level);
   if (language === 'python')     return parsePython(content, relPath);
   if (language === 'inf' || language === 'dsc' || language === 'dec' ||
       language === 'fdf' || language === 'vfr' || language === 'hfr' ||
@@ -36,11 +60,52 @@ export function parseFile(
   return { symbols: [], calls: [], imports: [] };
 }
 
+/** Stable identity component of a fingerprint — what the symbol *is*, not what it does. */
+function symbolIdentity(sym: ParsedSymbol): string {
+  return `${sym.qualifiedName}\u0000${sym.kind}`;
+}
+
+function applyTextFingerprints(
+  symbols: ParsedSymbol[],
+  content: string,
+  language: string,
+  level: FingerprintLevel,
+): void {
+  if (symbols.length === 0) return;
+  const lines = content.split('\n');
+  // Parse the file once for all of its symbols. Null when the language has no
+  // tree-sitter grammar loaded, in which case every symbol degrades to text.
+  const tree = level >= 3 ? createFileTree(content, language) : null;
+  try {
+    const visit = (list: ParsedSymbol[]): void => {
+      for (const sym of list) {
+        if (!sym.fingerprint) {
+          const body = lines.slice(Math.max(0, sym.startLine - 1), sym.endLine).join('\n');
+          const result = computeFingerprint({
+            identity: symbolIdentity(sym),
+            body,
+            language,
+            level,
+            canonicalAst: tree?.canonicalizeSymbol(sym.startLine, sym.endLine, level) ?? undefined,
+          });
+          sym.fingerprint = result.fingerprint;
+          sym.fingerprintLevel = result.effectiveLevel;
+        }
+        if (sym.children?.length) visit(sym.children);
+      }
+    };
+    visit(symbols);
+  } finally {
+    tree?.dispose();
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
 //  JS / TS / JSX / TSX  via @babel/parser
 // ─────────────────────────────────────────────────────────────────
 function parseJSTS(
   content: string, language: string, relPath: string,
+  fingerprintLevel: FingerprintLevel = DEFAULT_FINGERPRINT_LEVEL,
 ): ParseResult {
   const plugins: any[] = [
     'classProperties',
@@ -303,7 +368,7 @@ function parseJSTS(
   function makeSym(
     name: string, kind: SymbolKind, node: any, exported: boolean,
   ): ParsedSymbol {
-    return {
+    const sym: ParsedSymbol = {
       name,
       qualifiedName: qname(name),
       kind,
@@ -314,6 +379,18 @@ function parseJSTS(
       exported,
       children: [],
     };
+    // The Babel AST is discarded once this walk finishes, so the structural
+    // fingerprint has to be taken here while the subtree is still in hand.
+    const printed = computeFingerprint({
+      identity: `${sym.qualifiedName}\u0000${sym.kind}`,
+      body: lines.slice(Math.max(0, sym.startLine - 1), sym.endLine).join('\n'),
+      language,
+      level: fingerprintLevel,
+      astNode: node,
+    });
+    sym.fingerprint = printed.fingerprint;
+    sym.fingerprintLevel = printed.effectiveLevel;
+    return sym;
   }
 
   // walk the program body

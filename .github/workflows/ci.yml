@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
-    branches: [main]
+    branches: ['**']
 
 jobs:
   build-and-test:
@@ -36,3 +36,6 @@ jobs:
 
       - name: Check persistent-memory SLOs
         run: npm run check:memory
+
+      - name: Check invalidation quality gate
+        run: npm run check:invalidation

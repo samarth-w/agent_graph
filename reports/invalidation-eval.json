@@ -1,0 +1,847 @@
+{
+  "goldPath": "fixtures/invalidation-gold.json",
+  "fingerprintLevel": 4,
+  "caseCount": 4021,
+  "judgementCount": 83428,
+  "skipped": 6966,
+  "lexicalThreshold": 0.95,
+  "arms": {
+    "B1_mtime": {
+      "tp": 1570,
+      "fp": 81858,
+      "fn": 0,
+      "tn": 0,
+      "precision": 0.0188,
+      "recall": 1,
+      "f1": 0.0369,
+      "knowledgeRetentionRate": 0
+    },
+    "B2_file_hash": {
+      "tp": 1570,
+      "fp": 81858,
+      "fn": 0,
+      "tn": 0,
+      "precision": 0.0188,
+      "recall": 1,
+      "f1": 0.0369,
+      "knowledgeRetentionRate": 0
+    },
+    "B3_line_hash": {
+      "tp": 1570,
+      "fp": 2397,
+      "fn": 0,
+      "tn": 79461,
+      "precision": 0.3958,
+      "recall": 1,
+      "f1": 0.5671,
+      "knowledgeRetentionRate": 0.9707
+    },
+    "B4_lexical": {
+      "tp": 66,
+      "fp": 173,
+      "fn": 1504,
+      "tn": 81685,
+      "precision": 0.2762,
+      "recall": 0.042,
+      "f1": 0.073,
+      "knowledgeRetentionRate": 0.9979
+    },
+    "B5_cgraph": {
+      "tp": 1570,
+      "fp": 1196,
+      "fn": 0,
+      "tn": 80662,
+      "precision": 0.5676,
+      "recall": 1,
+      "f1": 0.7242,
+      "knowledgeRetentionRate": 0.9854
+    }
+  },
+  "unsafeArms": [
+    "B4_lexical"
+  ],
+  "byMutationKind": {
+    "add_comment": {
+      "B1_mtime": {
+        "tp": 0,
+        "fp": 13965,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 0,
+        "fp": 13965,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 0,
+        "fp": 640,
+        "fn": 0,
+        "tn": 13325,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9542
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 99,
+        "fn": 0,
+        "tn": 13866,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9929
+      },
+      "B5_cgraph": {
+        "tp": 0,
+        "fp": 14,
+        "fn": 0,
+        "tn": 13951,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.999
+      }
+    },
+    "blank_line": {
+      "B1_mtime": {
+        "tp": 0,
+        "fp": 13965,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 0,
+        "fp": 13965,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 0,
+        "fp": 640,
+        "fn": 0,
+        "tn": 13325,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9542
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tn": 13965,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 0,
+        "fp": 14,
+        "fn": 0,
+        "tn": 13951,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.999
+      }
+    },
+    "respace_operator": {
+      "B1_mtime": {
+        "tp": 0,
+        "fp": 8576,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 0,
+        "fp": 8576,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 0,
+        "fp": 413,
+        "fn": 0,
+        "tn": 8163,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9518
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tn": 8576,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 0,
+        "fp": 12,
+        "fn": 0,
+        "tn": 8564,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9986
+      }
+    },
+    "change_operator": {
+      "B1_mtime": {
+        "tp": 297,
+        "fp": 6402,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0443,
+        "recall": 1,
+        "f1": 0.0849,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 297,
+        "fp": 6402,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0443,
+        "recall": 1,
+        "f1": 0.0849,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 297,
+        "fp": 30,
+        "fn": 0,
+        "tn": 6372,
+        "precision": 0.9083,
+        "recall": 1,
+        "f1": 0.9519,
+        "knowledgeRetentionRate": 0.9953
+      },
+      "B4_lexical": {
+        "tp": 5,
+        "fp": 0,
+        "fn": 292,
+        "tn": 6402,
+        "precision": 1,
+        "recall": 0.0168,
+        "f1": 0.0331,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 297,
+        "fp": 45,
+        "fn": 0,
+        "tn": 6357,
+        "precision": 0.8684,
+        "recall": 1,
+        "f1": 0.9296,
+        "knowledgeRetentionRate": 0.993
+      }
+    },
+    "rename_local": {
+      "B1_mtime": {
+        "tp": 0,
+        "fp": 9351,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 0,
+        "fp": 9351,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 0,
+        "fp": 441,
+        "fn": 0,
+        "tn": 8910,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9528
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 67,
+        "fn": 0,
+        "tn": 9284,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9928
+      },
+      "B5_cgraph": {
+        "tp": 0,
+        "fp": 122,
+        "fn": 0,
+        "tn": 9229,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.987
+      }
+    },
+    "change_literal": {
+      "B1_mtime": {
+        "tp": 131,
+        "fp": 2092,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0589,
+        "recall": 1,
+        "f1": 0.1113,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 131,
+        "fp": 2092,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0589,
+        "recall": 1,
+        "f1": 0.1113,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 131,
+        "fp": 11,
+        "fn": 0,
+        "tn": 2081,
+        "precision": 0.9225,
+        "recall": 1,
+        "f1": 0.9597,
+        "knowledgeRetentionRate": 0.9947
+      },
+      "B4_lexical": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 130,
+        "tn": 2092,
+        "precision": 1,
+        "recall": 0.0076,
+        "f1": 0.0152,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 131,
+        "fp": 201,
+        "fn": 0,
+        "tn": 1891,
+        "precision": 0.3946,
+        "recall": 1,
+        "f1": 0.5659,
+        "knowledgeRetentionRate": 0.9039
+      }
+    },
+    "swap_args": {
+      "B1_mtime": {
+        "tp": 345,
+        "fp": 8003,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0413,
+        "recall": 1,
+        "f1": 0.0794,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 345,
+        "fp": 8003,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0413,
+        "recall": 1,
+        "f1": 0.0794,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 345,
+        "fp": 24,
+        "fn": 0,
+        "tn": 7979,
+        "precision": 0.935,
+        "recall": 1,
+        "f1": 0.9664,
+        "knowledgeRetentionRate": 0.997
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 345,
+        "tn": 8003,
+        "precision": 1,
+        "recall": 0,
+        "f1": 0,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 345,
+        "fp": 176,
+        "fn": 0,
+        "tn": 7827,
+        "precision": 0.6622,
+        "recall": 1,
+        "f1": 0.7968,
+        "knowledgeRetentionRate": 0.978
+      }
+    },
+    "delete_call": {
+      "B1_mtime": {
+        "tp": 287,
+        "fp": 6926,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0398,
+        "recall": 1,
+        "f1": 0.0765,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 287,
+        "fp": 6926,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0398,
+        "recall": 1,
+        "f1": 0.0765,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 287,
+        "fp": 22,
+        "fn": 0,
+        "tn": 6904,
+        "precision": 0.9288,
+        "recall": 1,
+        "f1": 0.9631,
+        "knowledgeRetentionRate": 0.9968
+      },
+      "B4_lexical": {
+        "tp": 58,
+        "fp": 2,
+        "fn": 229,
+        "tn": 6924,
+        "precision": 0.9667,
+        "recall": 0.2021,
+        "f1": 0.3343,
+        "knowledgeRetentionRate": 0.9997
+      },
+      "B5_cgraph": {
+        "tp": 287,
+        "fp": 96,
+        "fn": 0,
+        "tn": 6830,
+        "precision": 0.7493,
+        "recall": 1,
+        "f1": 0.8567,
+        "knowledgeRetentionRate": 0.9861
+      }
+    },
+    "edit_comment": {
+      "B1_mtime": {
+        "tp": 0,
+        "fp": 1647,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 0,
+        "fp": 1647,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 0,
+        "fp": 114,
+        "fn": 0,
+        "tn": 1533,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9308
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "tn": 1647,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 0,
+        "fp": 5,
+        "fn": 0,
+        "tn": 1642,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.997
+      }
+    },
+    "change_return": {
+      "B1_mtime": {
+        "tp": 495,
+        "fp": 10664,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0444,
+        "recall": 1,
+        "f1": 0.0849,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 495,
+        "fp": 10664,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0444,
+        "recall": 1,
+        "f1": 0.0849,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 495,
+        "fp": 32,
+        "fn": 0,
+        "tn": 10632,
+        "precision": 0.9393,
+        "recall": 1,
+        "f1": 0.9687,
+        "knowledgeRetentionRate": 0.997
+      },
+      "B4_lexical": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 493,
+        "tn": 10664,
+        "precision": 1,
+        "recall": 0.004,
+        "f1": 0.008,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 495,
+        "fp": 254,
+        "fn": 0,
+        "tn": 10410,
+        "precision": 0.6609,
+        "recall": 1,
+        "f1": 0.7958,
+        "knowledgeRetentionRate": 0.9762
+      }
+    },
+    "negate_condition": {
+      "B1_mtime": {
+        "tp": 15,
+        "fp": 70,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.1765,
+        "recall": 1,
+        "f1": 0.3,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 15,
+        "fp": 70,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.1765,
+        "recall": 1,
+        "f1": 0.3,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 15,
+        "fp": 2,
+        "fn": 0,
+        "tn": 68,
+        "precision": 0.8824,
+        "recall": 1,
+        "f1": 0.9375,
+        "knowledgeRetentionRate": 0.9714
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 15,
+        "tn": 70,
+        "precision": 1,
+        "recall": 0,
+        "f1": 0,
+        "knowledgeRetentionRate": 1
+      },
+      "B5_cgraph": {
+        "tp": 15,
+        "fp": 62,
+        "fn": 0,
+        "tn": 8,
+        "precision": 0.1948,
+        "recall": 1,
+        "f1": 0.3261,
+        "knowledgeRetentionRate": 0.1143
+      }
+    },
+    "quote_style": {
+      "B1_mtime": {
+        "tp": 0,
+        "fp": 197,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 0,
+        "fp": 197,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 0,
+        "fp": 28,
+        "fn": 0,
+        "tn": 169,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.8579
+      },
+      "B4_lexical": {
+        "tp": 0,
+        "fp": 5,
+        "fn": 0,
+        "tn": 192,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.9746
+      },
+      "B5_cgraph": {
+        "tp": 0,
+        "fp": 195,
+        "fn": 0,
+        "tn": 2,
+        "precision": 0,
+        "recall": 1,
+        "f1": 0,
+        "knowledgeRetentionRate": 0.0102
+      }
+    }
+  },
+  "byLanguage": {
+    "typescript": {
+      "B1_mtime": {
+        "tp": 1431,
+        "fp": 80051,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0176,
+        "recall": 1,
+        "f1": 0.0345,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 1431,
+        "fp": 80051,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0176,
+        "recall": 1,
+        "f1": 0.0345,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 1431,
+        "fp": 2227,
+        "fn": 0,
+        "tn": 77824,
+        "precision": 0.3912,
+        "recall": 1,
+        "f1": 0.5624,
+        "knowledgeRetentionRate": 0.9722
+      },
+      "B4_lexical": {
+        "tp": 61,
+        "fp": 152,
+        "fn": 1370,
+        "tn": 79899,
+        "precision": 0.2864,
+        "recall": 0.0426,
+        "f1": 0.0742,
+        "knowledgeRetentionRate": 0.9981
+      },
+      "B5_cgraph": {
+        "tp": 1431,
+        "fp": 208,
+        "fn": 0,
+        "tn": 79843,
+        "precision": 0.8731,
+        "recall": 1,
+        "f1": 0.9322,
+        "knowledgeRetentionRate": 0.9974
+      }
+    },
+    "cpp": {
+      "B1_mtime": {
+        "tp": 20,
+        "fp": 83,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.1942,
+        "recall": 1,
+        "f1": 0.3252,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 20,
+        "fp": 83,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.1942,
+        "recall": 1,
+        "f1": 0.3252,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 20,
+        "fp": 18,
+        "fn": 0,
+        "tn": 65,
+        "precision": 0.5263,
+        "recall": 1,
+        "f1": 0.6897,
+        "knowledgeRetentionRate": 0.7831
+      },
+      "B4_lexical": {
+        "tp": 1,
+        "fp": 2,
+        "fn": 19,
+        "tn": 81,
+        "precision": 0.3333,
+        "recall": 0.05,
+        "f1": 0.087,
+        "knowledgeRetentionRate": 0.9759
+      },
+      "B5_cgraph": {
+        "tp": 20,
+        "fp": 0,
+        "fn": 0,
+        "tn": 83,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1,
+        "knowledgeRetentionRate": 1
+      }
+    },
+    "python": {
+      "B1_mtime": {
+        "tp": 119,
+        "fp": 1724,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0646,
+        "recall": 1,
+        "f1": 0.1213,
+        "knowledgeRetentionRate": 0
+      },
+      "B2_file_hash": {
+        "tp": 119,
+        "fp": 1724,
+        "fn": 0,
+        "tn": 0,
+        "precision": 0.0646,
+        "recall": 1,
+        "f1": 0.1213,
+        "knowledgeRetentionRate": 0
+      },
+      "B3_line_hash": {
+        "tp": 119,
+        "fp": 152,
+        "fn": 0,
+        "tn": 1572,
+        "precision": 0.4391,
+        "recall": 1,
+        "f1": 0.6103,
+        "knowledgeRetentionRate": 0.9118
+      },
+      "B4_lexical": {
+        "tp": 4,
+        "fp": 19,
+        "fn": 115,
+        "tn": 1705,
+        "precision": 0.1739,
+        "recall": 0.0336,
+        "f1": 0.0563,
+        "knowledgeRetentionRate": 0.989
+      },
+      "B5_cgraph": {
+        "tp": 119,
+        "fp": 988,
+        "fn": 0,
+        "tn": 736,
+        "precision": 0.1075,
+        "recall": 1,
+        "f1": 0.1941,
+        "knowledgeRetentionRate": 0.4269
+      }
+    }
+  }
+}

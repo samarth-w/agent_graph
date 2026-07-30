@@ -27,6 +27,7 @@ import { buildPrSummary } from './cli/pr-summary';
 import { evaluateGate } from './cli/gate';
 import { formatGateMarkdown, formatOverviewMarkdown, formatPrSummaryMarkdown } from './cli/formatters';
 import { MemoryService } from './memory';
+import { syncProvenance } from './provenance';
 
 export * from './cli/diagnostics';
 export * from './cli/impact';
@@ -996,6 +997,75 @@ memoryCommand
       out(new MemoryService(db).compactMemory({
         retentionMs: opts.retentionMs === undefined ? undefined : Number(opts.retentionMs),
         nowMs: opts.nowMs === undefined ? undefined : Number(opts.nowMs),
+      }), opts.pretty);
+    } finally {
+      MemoryService.closeForGraphPath(getDbPath(root));
+      db.close();
+    }
+  });
+
+memoryCommand
+  .command('affected')
+  .description('List memory versions affected by evidence or provenance changes')
+  .option('--dir <path>', 'project root directory')
+  .option('--source-type <type>', 'evidence source type filter')
+  .option('--source-ref <ref>', 'evidence source reference filter')
+  .option('--source-hash <hash>', 'evidence excerpt hash filter')
+  .option('--limit <count>', 'maximum number of affected versions to return')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: { dir?: string; sourceType?: string; sourceRef?: string; sourceHash?: string; limit?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      out(new MemoryService(db).listAffectedMemories({
+        sourceType: opts.sourceType,
+        sourceRef: opts.sourceRef,
+        sourceHash: opts.sourceHash,
+        limit: opts.limit === undefined ? undefined : Number(opts.limit),
+      }), opts.pretty);
+    } finally {
+      MemoryService.closeForGraphPath(getDbPath(root));
+      db.close();
+    }
+  });
+
+memoryCommand
+  .command('sync-provenance')
+  .description('Detect semantic symbol changes and invalidate memories that depend on them')
+  .option('--dir <path>', 'project root directory')
+  .option('--max-depth <n>', 'reverse call-graph hops to walk from each changed symbol')
+  .option('--dry-run', 'report impact without mutating memory or the baseline')
+  .option('--reason <text>', 'explanation stamped onto invalidated versions')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: { dir?: string; maxDepth?: string; dryRun?: boolean; reason?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      out(syncProvenance(db, root, {
+        maxDepth: opts.maxDepth === undefined ? undefined : Number(opts.maxDepth),
+        dryRun: opts.dryRun === true,
+        reason: opts.reason,
+      }), opts.pretty);
+    } finally {
+      MemoryService.closeForGraphPath(getDbPath(root));
+      db.close();
+    }
+  });
+
+memoryCommand
+  .command('revalidate')
+  .description('Revalidate a memory version and restore it to active state')
+  .option('--dir <path>', 'project root directory')
+  .option('--version-id <id>', 'memory version identifier')
+  .option('--reason <text>', 'explanation for the revalidation')
+  .option('--pretty', 'pretty-print JSON output')
+  .action(async (opts: { dir?: string; versionId?: string; reason?: string; pretty?: boolean }) => {
+    const root = resolveRoot(opts.dir);
+    const db = await openDb(root);
+    try {
+      out(new MemoryService(db).revalidateMemory({
+        versionId: opts.versionId ?? '',
+        reason: opts.reason,
       }), opts.pretty);
     } finally {
       MemoryService.closeForGraphPath(getDbPath(root));

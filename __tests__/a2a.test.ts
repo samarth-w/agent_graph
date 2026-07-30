@@ -212,6 +212,23 @@ describe('A2A adapter skeleton', () => {
     expect(result.count).toBe(0);
   });
 
+  it('rejects write endpoints when an auth token is configured but the header is missing', async () => {
+    fs.writeFileSync(path.join(tempDir, '.cgraph.json'), JSON.stringify({ a2a: { authToken: 'demo-secret' } }));
+
+    const response = await handleA2ARpcRequest(tempDir, {
+      jsonrpc: '2.0',
+      id: 'write-auth-missing',
+      method: 'write_node',
+      params: {
+        agent_id: 'agent.auth',
+        name: 'writeAuthNode',
+      },
+    });
+
+    expect(response.error).toBeDefined();
+    expect(response.error?.message).toContain('Authentication required');
+  });
+
   it('revoke_agent marks a registration as revoked and future writes carry revoked trust status', async () => {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
     const claim = JSON.stringify({ capabilities: ['write_node'], scope: 'revoke' });

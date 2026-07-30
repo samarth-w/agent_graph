@@ -23,6 +23,7 @@ import { LRUCache } from './cache';
 import { FileWatcher } from './watcher';
 import type { McpToolDef, McpToolResult } from './types';
 import { MemoryService } from './memory';
+import { syncProvenance } from './provenance';
 import { replicateMemoryWrite } from './memory-replication';
 import { SmartCrusher } from './compression/SmartCrusher';
 import { CodeCompressor } from './compression/CodeCompressor';
@@ -446,6 +447,43 @@ const TOOLS: McpToolDef[] = [
     inputSchema: { type: 'object', properties: { retentionMs: { type: 'number', description: 'Retention period in milliseconds' } } },
   },
   {
+    name: 'cgraph_memory_affected',
+    description: 'List memory versions affected by a change to evidence or provenance.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sourceType: { type: 'string', description: 'Evidence source type' },
+        sourceRef: { type: 'string', description: 'Evidence source reference' },
+        sourceHash: { type: 'string', description: 'Evidence excerpt hash' },
+        limit: { type: 'number', description: 'Maximum versions to return' },
+      },
+    },
+  },
+  {
+    name: 'cgraph_memory_revalidate',
+    description: 'Revalidate a stale memory version and restore it to active state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        versionId: { type: 'string', description: 'Version to revalidate' },
+        reason: { type: 'string', description: 'Optional explanation for the revalidation' },
+      },
+      required: ['versionId'],
+    },
+  },
+  {
+    name: 'cgraph_memory_sync_provenance',
+    description: 'Detect semantic symbol-level code changes and invalidate memories whose evidence depends on them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        maxDepth: { type: 'number', description: 'Reverse call-graph hops to walk from each changed symbol (default 2)' },
+        dryRun: { type: 'boolean', description: 'Report impact without mutating memory or the baseline' },
+        reason: { type: 'string', description: 'Explanation stamped onto invalidated versions' },
+      },
+    },
+  },
+  {
     name: 'cgraph_memory_backfill',
     description: 'Idempotently import legacy A2A graph nodes into persistent memory.',
     inputSchema: { type: 'object', properties: {} },
@@ -522,6 +560,9 @@ export class ToolHandler {
       ['cgraph_memory_auto_resolve', (a) => this.handleMemoryAutoResolve(a)],
       ['cgraph_memory_expire', (a) => this.handleMemoryExpire(a)],
       ['cgraph_memory_compact', (a) => this.handleMemoryCompact(a)],
+      ['cgraph_memory_affected', (a) => this.handleMemoryAffected(a)],
+      ['cgraph_memory_sync_provenance', (a) => this.handleMemorySyncProvenance(a)],
+      ['cgraph_memory_revalidate', (a) => this.handleMemoryRevalidate(a)],
       ['cgraph_memory_backfill', (a) => this.handleMemoryBackfill(a)],
       ['cgraph_memory_migration_report', (a) => this.handleMemoryMigrationReport(a)],
       ['cgraph_memory_metrics', (a) => this.handleMemoryMetrics(a)],
@@ -570,6 +611,18 @@ export class ToolHandler {
         old?.close();
         this.cache.clear();
         clearFileCache();
+
+        // Opt-in: rebind memory to the new code state at symbol granularity.
+        const memoryCfg = loadConfig(this.rootDir).memory;
+        if (memoryCfg?.enabled !== false && memoryCfg?.autoSyncProvenance) {
+          try {
+            const sync = syncProvenance(fresh, this.rootDir, { maxDepth: memoryCfg.provenanceMaxDepth });
+            if (sync.invalidatedCount > 0) {
+              this.onProgress?.('sync', `Invalidated ${sync.invalidatedCount} memory version(s) after code change`);
+            }
+          } catch { /* provenance sync must never break tool calls */ }
+        }
+
         this.onProgress?.('sync', 'Index reloaded');
       } catch { /* keep old db */ }
       this.syncing = false;
@@ -1200,6 +1253,34 @@ export class ToolHandler {
     const db = await this.getDb();
     return this.textResult(JSON.stringify(new MemoryService(db).compactMemory({
       retentionMs: typeof args.retentionMs === 'number' ? args.retentionMs : undefined,
+    })));
+  }
+
+  private async handleMemoryAffected(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).listAffectedMemories({
+      sourceType: typeof args.sourceType === 'string' ? args.sourceType : undefined,
+      sourceRef: typeof args.sourceRef === 'string' ? args.sourceRef : undefined,
+      sourceHash: typeof args.sourceHash === 'string' ? args.sourceHash : undefined,
+      limit: typeof args.limit === 'number' ? args.limit : undefined,
+    })));
+  }
+
+  private async handleMemoryRevalidate(args: Record<string, unknown>): Promise<McpToolResult> {
+    const versionId = validateString(args.versionId, 'versionId');
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(new MemoryService(db).revalidateMemory({
+      versionId,
+      reason: typeof args.reason === 'string' ? args.reason : undefined,
+    })));
+  }
+
+  private async handleMemorySyncProvenance(args: Record<string, unknown>): Promise<McpToolResult> {
+    const db = await this.getDb();
+    return this.textResult(JSON.stringify(syncProvenance(db, this.rootDir, {
+      maxDepth: typeof args.maxDepth === 'number' ? args.maxDepth : undefined,
+      dryRun: args.dryRun === true,
+      reason: typeof args.reason === 'string' ? args.reason : undefined,
     })));
   }
 

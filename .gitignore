@@ -4,3 +4,4 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+fixtures/invalidation-gold.json

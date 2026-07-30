@@ -62,6 +62,10 @@ export interface NodeRecord {
   doc: string | null;
   exported: number; // 0 | 1
   role: string | null;
+  /** Normalized semantic fingerprint of the symbol body. */
+  fingerprint?: string | null;
+  /** Normalization level actually applied when computing `fingerprint`. */
+  fingerprint_level?: number | null;
 }
 
 export interface EdgeRecord {
@@ -101,6 +105,10 @@ export interface ParsedSymbol {
   children: ParsedSymbol[];
   extends?: string;
   implements?: string[];
+  /** Normalized semantic fingerprint of the symbol body. */
+  fingerprint?: string;
+  /** Normalization level actually applied when computing `fingerprint`. */
+  fingerprintLevel?: number;
 }
 
 export interface ParsedCall {
@@ -293,6 +301,15 @@ export interface MemoryConfig {
   hybridRankingEnabled?: boolean;
   autoResolveConflicts?: boolean;
   autoResolveMinimumMargin?: number;
+  /** Automatically run symbol-level provenance sync after a watcher re-index. */
+  autoSyncProvenance?: boolean;
+  /** Reverse call-graph hops walked from each changed symbol during auto-sync. */
+  provenanceMaxDepth?: number;
+  /**
+   * Fingerprint normalization aggressiveness (0-4, or the level name).
+   * Higher levels ignore more semantically-irrelevant edits.
+   */
+  fingerprintLevel?: number | string;
   replication?: MemoryReplicationConfig;
 }
 
@@ -453,13 +470,14 @@ export interface A2ARpcResponse {
 
 // ─── Persistent memory types ──────────────────────────────────
 export type MemoryType = 'fact' | 'plan' | 'observation' | 'decision' | 'warning';
-export type MemoryStatus = 'active' | 'unverified' | 'superseded' | 'revoked' | 'expired' | 'tombstoned';
+export type MemoryStatus = 'active' | 'unverified' | 'superseded' | 'revoked' | 'expired' | 'tombstoned' | 'stale' | 'needs_revalidation' | 'contradicted';
 
 export interface MemoryEvidenceInput {
   sourceType: string;
   sourceRef: string;
   excerptHash?: string;
   capturedAtMs?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface MemoryPrincipalSnapshot {
@@ -532,7 +550,7 @@ export interface MemoryQueryEntry {
   createdAt: number;
   policyWarnings: string[];
   acceptedRules: string[];
-  evidenceRefs: Array<{ sourceType: string; sourceRef: string; excerptHash?: string }>;
+  evidenceRefs: Array<{ sourceType: string; sourceRef: string; excerptHash?: string; metadata?: Record<string, unknown> }>;
 }
 
 export interface MemoryQueryResult {
@@ -572,6 +590,91 @@ export interface MemoryAutoResolutionResult {
   resolvedCount: number;
   unresolvedCount: number;
   conflictIds: string[];
+}
+
+export interface MemoryInvalidationInput {
+  sourceType?: string;
+  sourceRef?: string;
+  sourceHash?: string;
+  reason?: string;
+  nowMs?: number;
+}
+
+export interface MemoryInvalidationResult {
+  invalidatedCount: number;
+  versionIds: string[];
+}
+
+// ─── Symbol-level provenance ───────────────────────────────────
+export interface SymbolFingerprint {
+  qualifiedName: string;
+  filePath: string;
+  fingerprint: string;
+}
+
+export interface ProvenanceDiff {
+  changed: string[];
+  added: string[];
+  removed: string[];
+}
+
+export type ProvenanceChangeType = 'changed' | 'removed' | 'dependent';
+
+export interface ProvenanceImpactedSymbol {
+  qualifiedName: string;
+  filePath: string;
+  changeType: ProvenanceChangeType;
+  depth: number;
+}
+
+export interface ProvenanceSyncResult {
+  scannedSymbols: number;
+  changedSymbols: string[];
+  addedSymbols: string[];
+  removedSymbols: string[];
+  impactedSymbols: ProvenanceImpactedSymbol[];
+  invalidatedCount: number;
+  invalidatedVersionIds: string[];
+  durationMs: number;
+  dryRun: boolean;
+  /**
+   * True when the stored baseline was produced by a different fingerprint
+   * algorithm or normalization level and could not be compared, forcing a
+   * conservative full revalidation.
+   */
+  baselineReset: boolean;
+  /** `<algorithmVersion>:<fingerprintLevel>` that produced this baseline. */
+  baselineVersion: string;
+}
+
+export interface MemoryChangeImpactEntry {
+  memoryId: string;
+  versionId: string;
+  namespace: string;
+  subjectKey: string;
+  memoryType: MemoryType;
+  status: MemoryStatus;
+  reason?: string | null;
+  evidenceRefs: Array<{ sourceType: string; sourceRef: string; metadata?: Record<string, unknown> }>;
+}
+
+export interface MemoryChangeImpactResult {
+  affectedCount: number;
+  affected: MemoryChangeImpactEntry[];
+}
+
+export interface MemoryRevalidationInput {
+  versionId: string;
+  reason?: string;
+  nowMs?: number;
+}
+
+export interface MemoryRevalidationResult {
+  ok: boolean;
+  versionId: string;
+  status: MemoryStatus;
+  reason?: string | null;
+  error?: string;
 }
 
 export interface MemoryReplicationResult {
